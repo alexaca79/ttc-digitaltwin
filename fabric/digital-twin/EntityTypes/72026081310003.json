@@ -1,0 +1,11 @@
+{
+  "Id": "72026081310003",
+  "Namespace": "usertypes",
+  "BaseEntityTypeId": "2",
+  "Name": "Stop",
+  "Properties": [
+    { "Id": "72026081313001", "Name": "DisplayName", "ValueType": "String" },
+    { "Id": "72026081313002", "Name": "StopId", "ValueType": "String" }
+  ],
+  "TimeseriesProperties": []
+}

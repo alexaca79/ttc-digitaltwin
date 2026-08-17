@@ -1,0 +1,33 @@
+{
+  "OperationId": "f4d906f5-2b0c-4ae1-af36-7e57da4ab002",
+  "DisplayName": "Vehicle_telemetry_mapping",
+  "OperationType": "Mapping",
+  "EntityTypeId": "72026081310001",
+  "MappingOperationProperties": {
+    "MappingType": "TimeSeries",
+    "MappedProperties": [
+      { "SourceColumn": "ObservedAt", "EntityTypePropertyName": "Timestamp" },
+      { "SourceColumn": "Latitude", "EntityTypePropertyName": "Latitude" },
+      { "SourceColumn": "Longitude", "EntityTypePropertyName": "Longitude" },
+      { "SourceColumn": "Bearing", "EntityTypePropertyName": "Bearing" },
+      { "SourceColumn": "SpeedKph", "EntityTypePropertyName": "SpeedKph" },
+      { "SourceColumn": "ScheduleDeviationSeconds", "EntityTypePropertyName": "ScheduleDeviationSeconds" },
+      { "SourceColumn": "Occupancy", "EntityTypePropertyName": "Occupancy" },
+      { "SourceColumn": "State", "EntityTypePropertyName": "State" }
+    ],
+    "ProcessingType": "Incremental",
+    "EntityInstanceIdSchema": null,
+    "TimeseriesEntityLinkProperties": {
+      "EntityProperty": "VehicleId",
+      "TimeseriesProperty": "VehicleId"
+    }
+  },
+  "SourceTableProperties": {
+    "SourceType": "LakehouseTables",
+    "WorkspaceId": "{{WORKSPACE_ID}}",
+    "ItemId": "{{LAKEHOUSE_ID}}",
+    "SourceTableName": "ttc_vehicle_positions",
+    "SourceSchema": "bronze"
+  },
+  "Filters": null
+}

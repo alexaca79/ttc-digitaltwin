@@ -1,0 +1,127 @@
+{
+  "compatibilityLevel": "1.1",
+  "sources": [
+    {
+      "name": "TTCPublisher",
+      "type": "CustomEndpoint",
+      "properties": {}
+    }
+  ],
+  "streams": [
+    {
+      "name": "TTCTelemetry-stream",
+      "type": "DefaultStream",
+      "properties": {},
+      "inputNodes": [
+        {
+          "name": "TTCPublisher"
+        }
+      ]
+    }
+  ],
+  "operators": [
+    {
+      "name": "RouteTransitEvents",
+      "type": "SQL",
+      "inputNodes": [
+        {
+          "name": "TTCTelemetry-stream"
+        }
+      ],
+      "properties": {
+        "query": "SELECT eventId AS EventId, CAST(observedAt AS datetime) AS ObservedAt, vehicleId AS VehicleId, vehicleLabel AS VehicleLabel, tripId AS TripId, routeId AS RouteId, mode AS Mode, latitude AS Latitude, longitude AS Longitude, bearing AS Bearing, speedKph AS SpeedKph, scheduleDeviationSeconds AS ScheduleDeviationSeconds, occupancy AS Occupancy, state AS State, stopId AS StopId, currentStatus AS CurrentStatus, source AS Source INTO [VehicleEventhouse] FROM [TTCTelemetry-stream] WHERE eventType = 'VehiclePosition'\nSELECT eventId AS EventId, CAST(observedAt AS datetime) AS ObservedAt, vehicleId AS VehicleId, vehicleLabel AS VehicleLabel, tripId AS TripId, routeId AS RouteId, mode AS Mode, latitude AS Latitude, longitude AS Longitude, bearing AS Bearing, speedKph AS SpeedKph, scheduleDeviationSeconds AS ScheduleDeviationSeconds, occupancy AS Occupancy, state AS State, stopId AS StopId, currentStatus AS CurrentStatus, source AS Source INTO [VehicleLakehouse] FROM [TTCTelemetry-stream] WHERE eventType = 'VehiclePosition'\nSELECT eventId AS EventId, CAST(observedAt AS datetime) AS ObservedAt, tripId AS TripId, routeId AS RouteId, vehicleId AS VehicleId, stopId AS StopId, stopSequence AS StopSequence, arrivalEpochSeconds AS ArrivalEpochSeconds, departureEpochSeconds AS DepartureEpochSeconds, delaySeconds AS DelaySeconds, source AS Source INTO [TripEventhouse] FROM [TTCTelemetry-stream] WHERE eventType = 'TripUpdate'\nSELECT eventId AS EventId, CAST(observedAt AS datetime) AS ObservedAt, alertId AS AlertId, severity AS Severity, title AS Title, description AS Description, routeIds AS RouteIds, cause AS Cause, effect AS Effect, activeStartEpochSeconds AS ActiveStartEpochSeconds, activeEndEpochSeconds AS ActiveEndEpochSeconds, source AS Source INTO [AlertEventhouse] FROM [TTCTelemetry-stream] WHERE eventType = 'ServiceAlert'"
+      }
+    }
+  ],
+  "destinations": [
+    {
+      "name": "VehicleEventhouse",
+      "type": "Eventhouse",
+      "properties": {
+        "dataIngestionMode": "ProcessedIngestion",
+        "workspaceId": "{{WORKSPACE_ID}}",
+        "itemId": "{{KQL_DATABASE_ID}}",
+        "databaseName": "TTCOperations",
+        "tableName": "VehiclePositions",
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "RouteTransitEvents"
+        }
+      ]
+    },
+    {
+      "name": "TripEventhouse",
+      "type": "Eventhouse",
+      "properties": {
+        "dataIngestionMode": "ProcessedIngestion",
+        "workspaceId": "{{WORKSPACE_ID}}",
+        "itemId": "{{KQL_DATABASE_ID}}",
+        "databaseName": "TTCOperations",
+        "tableName": "TripUpdates",
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "RouteTransitEvents"
+        }
+      ]
+    },
+    {
+      "name": "AlertEventhouse",
+      "type": "Eventhouse",
+      "properties": {
+        "dataIngestionMode": "ProcessedIngestion",
+        "workspaceId": "{{WORKSPACE_ID}}",
+        "itemId": "{{KQL_DATABASE_ID}}",
+        "databaseName": "TTCOperations",
+        "tableName": "ServiceAlerts",
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "RouteTransitEvents"
+        }
+      ]
+    },
+    {
+      "name": "VehicleLakehouse",
+      "type": "Lakehouse",
+      "properties": {
+        "workspaceId": "{{WORKSPACE_ID}}",
+        "itemId": "{{LAKEHOUSE_ID}}",
+        "schema": "bronze",
+        "deltaTable": "ttc_vehicle_positions",
+        "minimumRows": 1000,
+        "maximumDurationInSeconds": 60,
+        "inputSerialization": {
+          "type": "Json",
+          "properties": {
+            "encoding": "UTF8"
+          }
+        }
+      },
+      "inputNodes": [
+        {
+          "name": "RouteTransitEvents"
+        }
+      ]
+    }
+  ]
+}

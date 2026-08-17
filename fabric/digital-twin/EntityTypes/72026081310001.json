@@ -1,0 +1,24 @@
+{
+  "Id": "72026081310001",
+  "Namespace": "usertypes",
+  "BaseEntityTypeId": "2",
+  "Name": "Vehicle",
+  "Properties": [
+    { "Id": "72026081311001", "Name": "DisplayName", "ValueType": "String" },
+    { "Id": "72026081311002", "Name": "VehicleId", "ValueType": "String" },
+    { "Id": "72026081311003", "Name": "RouteId", "ValueType": "String" },
+    { "Id": "72026081311004", "Name": "TripId", "ValueType": "String" },
+    { "Id": "72026081311005", "Name": "Mode", "ValueType": "String" },
+    { "Id": "72026081311006", "Name": "StopId", "ValueType": "String" }
+  ],
+  "TimeseriesProperties": [
+    { "Id": "72026081311101", "Name": "Timestamp", "ValueType": "DateTime" },
+    { "Id": "72026081311102", "Name": "Latitude", "ValueType": "Double" },
+    { "Id": "72026081311103", "Name": "Longitude", "ValueType": "Double" },
+    { "Id": "72026081311104", "Name": "Bearing", "ValueType": "Double" },
+    { "Id": "72026081311105", "Name": "SpeedKph", "ValueType": "Double" },
+    { "Id": "72026081311106", "Name": "ScheduleDeviationSeconds", "ValueType": "BigInt" },
+    { "Id": "72026081311107", "Name": "Occupancy", "ValueType": "String" },
+    { "Id": "72026081311108", "Name": "State", "ValueType": "String" }
+  ]
+}

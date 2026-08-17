@@ -1,0 +1,30 @@
+{
+  "OperationId": "f4d906f5-2b0c-4ae1-af36-7e57da4ab004",
+  "DisplayName": "Stop_mapping",
+  "OperationType": "Mapping",
+  "EntityTypeId": "72026081310003",
+  "MappingOperationProperties": {
+    "MappingType": "NonTimeSeries",
+    "MappedProperties": [
+      { "SourceColumn": "StopId", "EntityTypePropertyName": "DisplayName" },
+      { "SourceColumn": "StopId", "EntityTypePropertyName": "StopId" }
+    ],
+    "ProcessingType": "Iterative",
+    "EntityInstanceIdSchema": ["StopId"],
+    "TimeseriesEntityLinkProperties": null
+  },
+  "SourceTableProperties": {
+    "SourceType": "LakehouseTables",
+    "WorkspaceId": "{{WORKSPACE_ID}}",
+    "ItemId": "{{LAKEHOUSE_ID}}",
+    "SourceTableName": "ttc_vehicle_positions",
+    "SourceSchema": "bronze"
+  },
+  "Filters": {
+    "type": "comparison",
+    "SourceColumn": "StopId",
+    "ComparisonOperatorKind": "IsNotNull",
+    "Value": "",
+    "ValueType": "String"
+  }
+}

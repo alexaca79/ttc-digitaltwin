@@ -1,0 +1,28 @@
+{
+  "OperationId": "f4d906f5-2b0c-4ae1-af36-7e57da4ab001",
+  "DisplayName": "Vehicle_identity_mapping",
+  "OperationType": "Mapping",
+  "EntityTypeId": "72026081310001",
+  "MappingOperationProperties": {
+    "MappingType": "NonTimeSeries",
+    "MappedProperties": [
+      { "SourceColumn": "VehicleLabel", "EntityTypePropertyName": "DisplayName" },
+      { "SourceColumn": "VehicleId", "EntityTypePropertyName": "VehicleId" },
+      { "SourceColumn": "RouteId", "EntityTypePropertyName": "RouteId" },
+      { "SourceColumn": "TripId", "EntityTypePropertyName": "TripId" },
+      { "SourceColumn": "Mode", "EntityTypePropertyName": "Mode" },
+      { "SourceColumn": "StopId", "EntityTypePropertyName": "StopId" }
+    ],
+    "ProcessingType": "Iterative",
+    "EntityInstanceIdSchema": ["VehicleId"],
+    "TimeseriesEntityLinkProperties": null
+  },
+  "SourceTableProperties": {
+    "SourceType": "LakehouseTables",
+    "WorkspaceId": "{{WORKSPACE_ID}}",
+    "ItemId": "{{LAKEHOUSE_ID}}",
+    "SourceTableName": "ttc_vehicle_positions",
+    "SourceSchema": "bronze"
+  },
+  "Filters": null
+}

@@ -1,0 +1,21 @@
+// Fleet map
+CurrentFleet()
+| project ObservedAt, VehicleId, VehicleLabel, RouteId, Mode, Latitude, Longitude,
+          Bearing, SpeedKph, ScheduleDeviationSeconds, Occupancy, State
+
+// Route scorecard
+RoutePerformance(30m)
+
+// Active notices
+ActiveAlerts()
+| project ObservedAt, Severity, Title, Description, RouteIds, Cause, Effect
+
+// Network trend
+VehiclePositions
+| where ObservedAt > ago(6h)
+| summarize
+    Vehicles=dcount(VehicleId),
+    ScheduleReported=countif(isnotnull(ScheduleDeviationSeconds)),
+    MedianDelaySeconds=percentile(ScheduleDeviationSeconds, 50)
+  by bin(ObservedAt, 5m), Mode
+| order by ObservedAt asc

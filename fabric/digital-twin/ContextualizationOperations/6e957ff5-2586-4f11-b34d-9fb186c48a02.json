@@ -1,0 +1,10 @@
+{
+  "OperationId": "6e957ff5-2586-4f11-b34d-9fb186c48a02",
+  "DisplayName": "Vehicle_approaches_Stop",
+  "OperationType": "Contextualization",
+  "EntityTypeRelationshipId": "72026081320002",
+  "JoinColumns": {
+    "FirstColumn": { "EntityId": "72026081310001", "AttributeName": "StopId" },
+    "SecondColumn": { "EntityId": "72026081310003", "AttributeName": "StopId" }
+  }
+}
