@@ -91,6 +91,7 @@ flowchart LR
 
 | Resource | Published value |
 | --- | --- |
+| Source | [alexaca79/ttc-digitaltwin][source-repository] |
 | Fabric app | [TTC Digital Twin][fabric-app] |
 | Fabric workspace | `TTC Digital Twin Test` |
 | Fabric capacity | `rayfintestenv` (`F64`) |
@@ -114,6 +115,7 @@ flowchart LR
 
 [fabric-app]: https://happy-ferry-38f69258e5-westus2.webapp.fabricapps.net/
 [publisher-health]: https://ca-ttc-digital-twin-publisher.thankfulplant-49ee7bc3.eastus2.azurecontainerapps.io/api/health
+[source-repository]: https://github.com/alexaca79/ttc-digitaltwin
 
 The Eventstream uses processed ingestion, so the workload can be deployed
 through the Fabric REST API without a portal-created Eventhouse connection.
