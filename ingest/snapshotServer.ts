@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 
 import type { TransitSnapshot } from '../src/types/transit.js';
+import { fetchLiveSnapshot, fetchRoutePerformance, type KqlConfig } from './kqlClient.js';
 
 export interface PublisherState {
   snapshot: TransitSnapshot | null;
@@ -11,6 +12,9 @@ export interface PublisherState {
   eventstreamEnabled: boolean;
 }
 
+/** Allow-listed lookbacks keep caller input out of the KQL text. */
+const ALLOWED_LOOKBACKS = new Set(['15m', '30m', '1h', '3h', '6h', '12h', '24h']);
+
 function sendJson(response: import('node:http').ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(body));
@@ -19,7 +23,8 @@ function sendJson(response: import('node:http').ServerResponse, status: number, 
 export function startSnapshotServer(
   port: number,
   allowedOrigin: string,
-  getState: () => PublisherState
+  getState: () => PublisherState,
+  kql: KqlConfig | null = null
 ): Promise<Server> {
   const server = createServer((request, response) => {
     response.setHeader('Access-Control-Allow-Origin', allowedOrigin);
@@ -33,7 +38,49 @@ export function startSnapshotServer(
       return;
     }
 
-    if (request.method === 'GET' && request.url === '/api/snapshot') {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+
+    if (request.method === 'GET' && url.pathname === '/api/live') {
+      if (!kql) {
+        sendJson(response, 503, { error: 'Eventhouse query endpoint is not configured.' });
+        return;
+      }
+      fetchLiveSnapshot(kql)
+        .then((snapshot) => sendJson(response, 200, snapshot))
+        .catch((error: unknown) => {
+          sendJson(response, 503, {
+            error: 'Eventhouse query failed.',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/route-performance') {
+      if (!kql) {
+        sendJson(response, 503, { error: 'Eventhouse query endpoint is not configured.' });
+        return;
+      }
+      const lookback = url.searchParams.get('lookback') ?? '30m';
+      if (!ALLOWED_LOOKBACKS.has(lookback)) {
+        sendJson(response, 400, {
+          error: 'Unsupported lookback.',
+          allowed: [...ALLOWED_LOOKBACKS],
+        });
+        return;
+      }
+      fetchRoutePerformance(kql, lookback)
+        .then((rows) => sendJson(response, 200, { lookback, routes: rows }))
+        .catch((error: unknown) => {
+          sendJson(response, 503, {
+            error: 'Eventhouse query failed.',
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/snapshot') {
       const state = getState();
       if (!state.snapshot) {
         sendJson(response, 503, { error: 'No TTC snapshot has been collected yet.' });
@@ -43,11 +90,12 @@ export function startSnapshotServer(
       return;
     }
 
-    if (request.method === 'GET' && request.url === '/api/health') {
+    if (request.method === 'GET' && url.pathname === '/api/health') {
       const state = getState();
       sendJson(response, state.lastError ? 503 : 200, {
         status: state.lastError ? 'degraded' : state.snapshot ? 'ready' : 'starting',
         ...state,
+        kqlConfigured: Boolean(kql),
         snapshot: state.snapshot
           ? {
               observedAt: state.snapshot.observedAt,
@@ -59,7 +107,7 @@ export function startSnapshotServer(
       return;
     }
 
-    if (request.method === 'GET' && request.url === '/api/ready') {
+    if (request.method === 'GET' && url.pathname === '/api/ready') {
       const state = getState();
       const ready = Boolean(
         state.snapshot &&

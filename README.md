@@ -36,15 +36,12 @@ flowchart LR
 
   subgraph Azure["Azure Container Apps"]
     Publisher["TTC publisher<br/>poll, decode, normalize"]
-    Snapshot["Snapshot API<br/>/api/snapshot and /api/health"]
+    Snapshot["Snapshot and query API<br/>/api/live, /api/snapshot, /api/health"]
   end
 
   subgraph Fabric["Microsoft Fabric workspace: TTC Digital Twin Test"]
     Eventstream["TTCTelemetry Eventstream<br/>Custom Endpoint and SQL router"]
-    Eventhouse["TTCOperations KQL database<br/>RTI tables"]
-    Lakehouse["TTCDigitalTwinLakehouse<br/>vehicle positions"]
-    Refresh["TTCDigitalTwinRefresh<br/>Digital Twin Builder flow"]
-    Twin["TTCDigitalTwin<br/>Digital Twin Builder"]
+    Eventhouse["TTCOperations KQL database<br/>single serving store"]
     Rayfin["Rayfin AppBackend<br/>Fabric SSO and static hosting"]
     SQL["Rayfin managed SQL<br/>OperatorNote"]
     Queries["KQL and real-time<br/>dashboard queries"]
@@ -54,13 +51,11 @@ flowchart LR
 
   Live --> Publisher
   Static --> Publisher
-  Publisher --> Snapshot
   Publisher -->|"Kafka batches"| Eventstream
   Eventstream -->|"processed ingestion"| Eventhouse
-  Eventstream -->|"vehicle positions"| Lakehouse
   Eventhouse --> Queries
-  Lakehouse --> Refresh --> Twin
-  Snapshot -->|"HTTPS snapshot"| Browser
+  Queries -->|"CurrentFleet and ActiveAlerts"| Snapshot
+  Snapshot -->|"HTTPS live fleet"| Browser
   Tiles --> Browser
   Browser <-->|"Fabric SSO and typed data API"| Rayfin
   Rayfin --> SQL
@@ -71,11 +66,9 @@ flowchart LR
 | Layer | Deployed component | Responsibility |
 | --- | --- | --- |
 | Ingestion | Container App | Normalize and publish TTC events |
-| Live API | HTTPS ingress | Serve snapshots and health status |
+| Live API | HTTPS ingress | Serve KQL results, snapshots, and health |
 | Stream routing | `TTCTelemetry` | Route vehicles, trips, and alerts |
-| Hot analytics | `TTCOperations` | Store real-time KQL tables |
-| Lakehouse | Lakehouse | Persist bronze vehicle positions |
-| Twin model | Digital Twin Builder | Map entities and relationships |
+| Serving store | `TTCOperations` | Hold telemetry tables and query functions |
 | Application | Rayfin AppBackend | Host React, SSO, and the data API |
 | Operator data | Managed SQL | Store user-scoped operator notes |
 | Map | Leaflet and MapLibre | Render 2D fallback and optional 3D buildings |

@@ -11,7 +11,7 @@ This guide deploys the TTC Digital Twin from a fresh clone and operates it as a
 mostly Fabric-contained workload. It covers:
 
 * Microsoft Fabric Real-Time Intelligence items
-* Fabric Digital Twin Builder definitions and refresh flow
+* The Eventhouse KQL functions that serve the application
 * The Rayfin Fabric App, Fabric SSO, and managed SQL data
 * The TTC GTFS-realtime publisher and snapshot API
 * Validation, monitoring, rollback, and disaster recovery
@@ -25,9 +25,8 @@ Rayfin schema, application code, and publisher code.
 Fabric contains the operational data plane after ingestion:
 
 * Eventstream receives and routes normalized transit events.
-* Eventhouse stores hot vehicle, trip, and service-alert history.
-* Lakehouse stores bronze vehicle-position history.
-* Digital Twin Builder models Vehicle, Route, and Stop relationships.
+* Eventhouse is the single serving store for vehicle, trip, and alert history.
+* KQL functions answer every operational question the application asks.
 * Rayfin hosts the authenticated application and operator-note database.
 
 One component remains outside Fabric. The TTC publisher must continuously poll
@@ -41,6 +40,14 @@ Fabric does not otherwise depend on Azure compute.
 > delivery into Eventstream or a supported Fabric service that can perform
 > continuous 15-second polling and serve the authenticated snapshot API.
 
+Telemetry storage is deliberately single-tier.
+
+> [!NOTE]
+> There is one telemetry store. Every TTC event lands in `TTCOperations`, and
+> the application reads it through KQL. Eventhouse retention therefore bounds
+> history at 30 days for movement data and 90 days for alerts. Add a Lakehouse
+> destination only when you need history beyond those windows.
+
 ## Runtime Architecture
 
 ```mermaid
@@ -49,18 +56,14 @@ flowchart LR
   Publisher["Azure Container App publisher"]
   Eventstream["Fabric Eventstream"]
   Eventhouse["Fabric Eventhouse and KQL"]
-  Lakehouse["Fabric Lakehouse"]
-  Twin["Fabric Digital Twin Builder"]
   Rayfin["Rayfin Fabric App and managed SQL"]
   Browser["TTC operator browser"]
 
   TTC --> Publisher
   Publisher -->|"Kafka, 800 KB batches"| Eventstream
-  Publisher -->|"HTTPS snapshot"| Browser
   Eventstream --> Eventhouse
-  Eventstream --> Lakehouse
-  Lakehouse --> Twin
-  Eventhouse --> Twin
+  Eventhouse -->|"CurrentFleet and ActiveAlerts"| Publisher
+  Publisher -->|"HTTPS live fleet"| Browser
   Rayfin --> Browser
   Browser --> Rayfin
 ```
@@ -71,32 +74,28 @@ The deployment script creates or reuses the following names.
 
 | Fabric item | Repository definition |
 | --- | --- |
-| `TTCDigitalTwinLakehouse` | `fabric/eventstream/` |
 | `TTCEventhouse` | `scripts/deployFabric.ts` |
 | `TTCOperations` | `fabric/eventhouse/` |
 | `TTCTelemetry` | `fabric/eventstream/` |
-| `TTCDigitalTwin` | `fabric/digital-twin/` |
-| `TTCDigitalTwinRefresh` | `fabric/digital-twin-flow/` |
 | Rayfin AppBackend | `rayfin/rayfin.yml` |
 | Rayfin managed SQL | `rayfin/data/` |
 
 The deployment is idempotent by item name. Existing Eventstream definitions
-are compared before update. Digital Twin Builder definitions are reapplied.
-The KQL schema uses create-or-merge and create-or-alter operations.
+are compared before update. The KQL schema uses create-or-merge and
+create-or-alter operations.
 
 ## Data Contracts and Retention
 
 ### Eventstream
 
 `TTCTelemetry` has one Custom Endpoint named `TTCPublisher`. Its SQL operator
-routes three normalized event types:
+routes three normalized event types, all into `TTCOperations`:
 
-* `VehiclePosition` goes to Eventhouse and Lakehouse.
-* `TripUpdate` goes to Eventhouse.
-* `ServiceAlert` goes to Eventhouse.
+* `VehiclePosition` goes to the `VehiclePositions` table.
+* `TripUpdate` goes to the `TripUpdates` table.
+* `ServiceAlert` goes to the `ServiceAlerts` table.
 
-Eventstream uses low throughput and one-day stream retention. Lakehouse writes
-flush after 1,000 rows or 60 seconds.
+Eventstream uses low throughput and one-day stream retention.
 
 ### Eventhouse ingestion
 
@@ -114,17 +113,24 @@ Reusable functions are defined in `DatabaseSchema.kql`:
 * `RoutePerformance()` summarizes schedule adherence by route and mode.
 * `ActiveAlerts()` returns alerts whose active window has not ended.
 
-### Digital Twin Builder
+### Application query path
 
-The twin contains three entity types:
+The publisher exposes the Eventhouse to the browser through two read-only
+endpoints backed entirely by the KQL functions above:
 
-* Vehicle carries location, speed, bearing, occupancy, and adherence time
-  series.
-* Route supplies route identity and mode.
-* Stop supplies stop identity.
+| Endpoint | Query | Purpose |
+| --- | --- | --- |
+| `/api/live` | `CurrentFleet` and `ActiveAlerts` | Live map and alerts |
+| `/api/route-performance` | `RoutePerformance` | Route adherence summaries |
+| `/api/snapshot` | None | Fall back to in-memory poller state |
 
-Vehicle has many-to-one `operatesOn` relationships to Route and many-to-one
-`approaches` relationships to Stop.
+The browser calls `/api/live` first and falls back to `/api/snapshot` when the
+Eventhouse is unreachable, so a query outage degrades freshness rather than
+removing the map. The `lookback` parameter is restricted to an allow list, so
+caller input never reaches the KQL text.
+
+Queries authenticate with the publisher's managed identity. Grant that identity
+viewer access on `TTCOperations` before enabling `/api/live`.
 
 ### Rayfin
 
@@ -181,13 +187,10 @@ image remotely.
 The deployment identity needs:
 
 * Contributor or higher access to the target Fabric workspace
-* Access to a capacity that supports Fabric Apps and Digital Twin Builder
-* Permission to create Eventhouse, Lakehouse, Eventstream, and twin items
+* Access to a capacity that supports Fabric Apps
+* Permission to create Eventhouse, KQL database, and Eventstream items
+* Permission to grant the publisher identity viewer access on `TTCOperations`
 * Fabric Apps enabled by the tenant administrator
-* Digital Twin Builder enabled by the tenant administrator
-
-The current Digital Twin Builder deployment requires Autoscale Billing for
-Spark to be disabled for the tenant.
 
 ### Azure access
 
@@ -594,18 +597,57 @@ az containerapp update `
 
 Do not use `*` for production CORS.
 
-### 9. Start Digital Twin Builder refresh
+### 9. Connect the publisher to Eventhouse queries
 
-Wait until Eventstream has created
-`bronze.ttc_vehicle_positions` in the Lakehouse. The destination flushes at
-1,000 rows or 60 seconds.
+The `/api/live` endpoint reads `TTCOperations` with the publisher's
+system-assigned managed identity. Grant that identity viewer access, then point
+the app at the query endpoint.
 
-Open `TTCDigitalTwinRefresh` in Fabric. Run it once, confirm Vehicle, Route,
-and Stop entities, then configure the required schedule in the Fabric portal.
-The repository defines the flow but not its schedule. A five-minute cadence in
-the `America/Toronto` time zone is a reasonable starting point for this macro
-twin. Use Eventhouse or the snapshot API for lower-latency operations because
-the twin refresh is not the live dashboard data path.
+Resolve the identity's application ID:
+
+```powershell
+$PrincipalId = az containerapp identity show `
+  --resource-group $ResourceGroup `
+  --name $PublisherName `
+  --query principalId `
+  --output tsv
+
+$AppId = az ad sp show --id $PrincipalId --query appId --output tsv
+$TenantId = az account show --query tenantId --output tsv
+Write-Output "aadapp=$AppId;$TenantId"
+```
+
+In the Fabric portal, open `TTCOperations`, choose **Manage permissions**, and
+add that principal as a viewer. The equivalent KQL management command is:
+
+```kusto
+.add database TTCOperations viewers ('aadapp=<appId>;<tenantId>')
+```
+
+Then publish the query endpoint to the app:
+
+```powershell
+$Deployment = Get-Content .fabric/deployment.local.json | ConvertFrom-Json
+
+az containerapp update `
+  --resource-group $ResourceGroup `
+  --name $PublisherName `
+  --set-env-vars `
+    "FABRIC_KQL_QUERY_URI=$($Deployment.queryServiceUri)" `
+    "FABRIC_KQL_DATABASE=$($Deployment.kqlDatabaseName)"
+```
+
+Confirm the endpoint returns fleet rows from Eventhouse rather than the
+in-memory fallback:
+
+```powershell
+$Live = Invoke-RestMethod "$PublisherUrl/api/live"
+"$($Live.vehicles.Count) vehicles, $($Live.alerts.Count) alerts at $($Live.observedAt)"
+```
+
+Until this step completes, `/api/live` returns HTTP 503 and the browser falls
+back to `/api/snapshot`. The map still works; it is served from poller memory
+rather than from Eventhouse.
 
 ## Post-Deployment Validation
 
@@ -677,18 +719,19 @@ Open `TTCTelemetry` in Fabric and verify each node independently:
 * `VehicleEventhouse` is running and writing `VehiclePositions`.
 * `TripEventhouse` is running and writing `TripUpdates`.
 * `AlertEventhouse` is running and writing `ServiceAlerts`.
-* `VehicleLakehouse` is running and writing the bronze Delta table.
 
 Do not infer destination health only from source input counts.
 
-### Lakehouse and twin
+### Application query path checks
 
 Confirm that:
 
-* `bronze.ttc_vehicle_positions` exists and receives rows.
-* `TTCDigitalTwinRefresh` completes without failed mapping operations.
-* Vehicle entities have `operatesOn` Route relationships.
-* Vehicles with a current stop have `approaches` Stop relationships.
+* `/api/health` reports `kqlConfigured` as `true`.
+* `/api/live` returns HTTP 200 with a non-empty `vehicles` array.
+* `/api/route-performance?lookback=30m` returns route rows.
+* `/api/route-performance?lookback=90m` returns HTTP 400.
+
+The last check verifies that the lookback allow list is enforced.
 
 ### Fabric-hosted Rayfin application
 
@@ -799,7 +842,7 @@ applying custom readiness probes.
 * Alert on a non-empty `lastError` or `eventstreamEnabled=false`.
 * Review Eventstream source and destination health after capacity changes.
 * Refresh static GTFS when the City publishes a new archive.
-* Run or schedule `TTCDigitalTwinRefresh` after Lakehouse ingestion is active.
+* Alert when `/api/live` returns HTTP 503 for more than five minutes.
 * Review KQL retention and cache policy before increasing Eventstream volume.
 
 ### Recommended monitoring
@@ -817,8 +860,7 @@ Add Fabric monitoring for:
 
 * Eventstream input and destination errors
 * Eventhouse ingestion latency and row counts
-* Lakehouse destination flush failures
-* Digital Twin Builder refresh duration and failed operations
+* KQL query duration and failure rate for `CurrentFleet` and `ActiveAlerts`
 * Fabric capacity throttling
 
 ### Secret rotation
@@ -963,7 +1005,8 @@ A new Fabric workspace can be rebuilt from the repository:
 3. Rebuild and deploy the publisher with new Eventstream credentials.
 4. Set the new publisher URL and run tenant-aware `rayfin up` against the new
   workspace.
-5. Start the twin refresh after Lakehouse ingestion begins.
+5. Grant the new publisher identity viewer access on `TTCOperations` and set
+  `FABRIC_KQL_QUERY_URI`.
 
 This process rebuilds infrastructure and resumes ingestion. It does not restore
 historical state by itself.
@@ -979,14 +1022,19 @@ capabilities.
 | Configuration | Git | Rebuild from a known-good commit |
 | Snapshot | TTC feed | Resume; missed snapshots are not replayed |
 | Eventhouse | 30/90 days | Test recovery; export history to OneLake |
-| Lakehouse | OneLake | Add and test a retained copy |
 | Notes | Rayfin SQL | Test point-in-time restore or export |
 | Stream secret | Fabric | Resolve and update the credential |
 
 Before production use, define approved recovery point and recovery time
 objectives for each row. Run a recovery exercise into a separate workspace. Do
 not describe an environment rebuild as historical data recovery until
-Eventhouse, Lakehouse, and operator-note restore tests have passed.
+Eventhouse and operator-note restore tests have passed.
+
+> [!IMPORTANT]
+> Eventhouse is the only telemetry store, so its retention window is the
+> retention window for the whole workload. Anything older than 30 days for
+> movement data or 90 days for alerts is gone unless you export it. Add a
+> Lakehouse destination to `TTCTelemetry` before you need multi-year history.
 
 ### Production acceptance gates
 
@@ -994,7 +1042,7 @@ The current repository is deployment-ready for a pilot or test environment.
 Before classifying an environment as production, require evidence that:
 
 * Eventhouse history has an approved export and restore procedure.
-* Lakehouse history has a separately retained, tested copy.
+* Retention beyond the Eventhouse window has an owner and a destination.
 * Rayfin managed SQL notes have a tested point-in-time restore or export path.
 * Recovery owners, recovery point objectives, and recovery time objectives are
   recorded.
@@ -1036,10 +1084,16 @@ Confirm that Eventstream is running, the Custom Endpoint source is connected,
 and processed ingestion destinations point to `TTCOperations`. Compare the
 publisher health timestamp with Eventstream input metrics.
 
-### Lakehouse table is delayed
+### `/api/live` returns HTTP 503
 
-The destination flushes at 1,000 rows or 60 seconds. Wait at least one minute
-before treating an empty table as a failure.
+The response `detail` field carries the underlying reason. Check, in order:
+
+* `FABRIC_KQL_QUERY_URI` is set on the Container App.
+* The publisher managed identity is a viewer on `TTCOperations`.
+* `TTCOperations` contains rows for the requested window.
+
+Until this endpoint recovers, the browser serves the map from `/api/snapshot`,
+so a query failure degrades freshness rather than removing the map.
 
 ### Browser cannot call the snapshot API
 
@@ -1148,7 +1202,7 @@ Operator value:
 #### Static GTFS pathways and transfer rules
 
 Map the existing `pathways.txt` and `levels.txt` records into the compact
-network asset and twin. Add calendar exceptions, stop accessibility, and
+network asset. Add calendar exceptions, stop accessibility, and
 station hierarchy at the same time. The current archive does not include
 `transfers.txt`, so transfer rules require another authoritative source and
 must not be fabricated.
@@ -1204,7 +1258,9 @@ Camera metadata is refreshed as available, not as a guaranteed live stream.
 
 The City publishes monthly delay files with code-description resources. Ingest
 them into Lakehouse silver tables and build cause, location, duration, route,
-and time-of-day baselines.
+and time-of-day baselines. This is the first addition that requires a Lakehouse
+destination on `TTCTelemetry`, because the history outlives Eventhouse
+retention.
 
 Operator value:
 
@@ -1245,7 +1301,7 @@ Add vehicle and stop load, boardings, alightings, denied boardings, and
 aggregated fare-tap demand.
 
 This enables demand-versus-supply views and passenger-impact estimates. Do not
-ingest raw fare-card identifiers into the operations twin.
+ingest raw fare-card identifiers into the operations store.
 
 #### Incident and communications management
 
@@ -1276,7 +1332,7 @@ Apply these controls before adding internal data:
 
 * Use role-based access for control, maintenance, and planning views.
 * Pseudonymize employee identifiers unless identity is operationally required.
-* Aggregate fare and passenger data before it enters the twin.
+* Aggregate fare and passenger data before it enters the serving store.
 * Store source time, received time, and processing time on every event.
 * Show freshness, latency, and confidence in the interface.
 * Keep observed, estimated, and manually entered values distinguishable.
@@ -1291,8 +1347,9 @@ Implement additions in this order:
 1. Add real-time road restrictions and full alert detail to Eventstream and
    Eventhouse.
 2. Map existing pathway and level data, acquire authoritative transfer rules,
-  and add them with calendar exceptions to the Lakehouse and twin.
-3. Add monthly TTC delay history and annual ridership to Lakehouse silver and
+  and add them with calendar exceptions to the compact network asset.
+3. Add a Lakehouse destination to `TTCTelemetry`, then load monthly TTC delay
+   history and annual ridership into silver and
    gold tables.
 4. Add weather and event context with explicit freshness labels.
 5. Integrate CAD/AVL headway and dispatch actions under TTC role-based access.

@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -65,22 +65,6 @@ function part(path: string, content: string): DefinitionPart {
 
 function jsonPart(path: string, variables: Record<string, string>, definitionPath = path) {
   return part(definitionPath, template(readFileSync(join(root, 'fabric', path), 'utf8'), variables));
-}
-
-function directoryParts(folder: string, variables: Record<string, string>) {
-  const absoluteFolder = join(root, 'fabric', folder);
-  const files: string[] = [];
-  const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const fullPath = join(directory, entry.name);
-      if (entry.isDirectory()) visit(fullPath);
-      else if (entry.name.endsWith('.json')) files.push(fullPath);
-    }
-  };
-  visit(absoluteFolder);
-  return files.map((file) =>
-    part(relative(absoluteFolder, file), template(readFileSync(file, 'utf8'), variables))
-  );
 }
 
 function eventstreamDefinition(variables: Record<string, string>) {
@@ -153,18 +137,6 @@ async function fabricDefinitionMatches(
   });
 }
 
-function digitalTwinDefinition(variables: Record<string, string>) {
-  return {
-    parts: directoryParts('digital-twin', variables),
-  };
-}
-
-function flowDefinition(variables: Record<string, string>) {
-  return {
-    parts: directoryParts('digital-twin-flow', variables),
-  };
-}
-
 async function applyKqlSchema(token: string, queryServiceUri: string) {
   const kqlToken = getAzureAccessToken('https://kusto.kusto.windows.net');
   const schema = readFileSync(join(root, 'fabric', 'eventhouse', 'DatabaseSchema.kql'), 'utf8');
@@ -183,21 +155,15 @@ async function main() {
     const variables = {
       WORKSPACE_ID: dummyGuid,
       KQL_DATABASE_ID: dummyGuid,
-      LAKEHOUSE_ID: dummyGuid,
-      DIGITAL_TWIN_BUILDER_ID: dummyGuid,
     };
     const plan = {
-      lakehouse: 'TTCDigitalTwinLakehouse',
       eventhouse: 'TTCEventhouse',
       kqlDatabase: 'TTCOperations',
       eventstream: eventstreamDefinition(variables),
-      digitalTwinBuilder: digitalTwinDefinition(variables),
-      digitalTwinFlow: flowDefinition(variables),
     };
     console.log(
-      `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts, ` +
-        `${plan.digitalTwinBuilder.parts.length} Digital Twin Builder parts, ` +
-        `${plan.digitalTwinFlow.parts.length} flow parts.`
+      `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts ` +
+        `routed to ${plan.kqlDatabase}.`
     );
     return;
   }
@@ -213,17 +179,6 @@ async function main() {
   const token = getAzureAccessToken('https://api.fabric.microsoft.com');
   const workspaceId = await resolveWorkspaceId(token, args.workspaceId, args.workspaceName);
 
-  const { item: lakehouse } = await ensureFabricItem(
-    token,
-    workspaceId,
-    'lakehouses',
-    'TTCDigitalTwinLakehouse',
-    {
-      displayName: 'TTCDigitalTwinLakehouse',
-      description: 'Open TTC GTFS data for the macro operations digital twin.',
-      creationPayload: { enableSchemas: true },
-    }
-  );
   const { item: eventhouse } = await ensureFabricItem(
     token,
     workspaceId,
@@ -260,8 +215,6 @@ async function main() {
   const variables = {
     WORKSPACE_ID: workspaceId,
     KQL_DATABASE_ID: kqlDatabase.id,
-    LAKEHOUSE_ID: lakehouse.id,
-    DIGITAL_TWIN_BUILDER_ID: dummyGuid,
   };
   const { item: eventstream, created: eventstreamCreated } = await ensureFabricItem(
     token,
@@ -270,7 +223,7 @@ async function main() {
     'TTCTelemetry',
     {
       displayName: 'TTCTelemetry',
-      description: 'TTC GTFS-realtime Custom Endpoint routed to Eventhouse and Lakehouse.',
+      description: 'TTC GTFS-realtime Custom Endpoint routed to the TTCOperations KQL database.',
       definition: eventstreamDefinition(variables),
     }
   );
@@ -294,62 +247,17 @@ async function main() {
     );
   }
 
-  const { item: digitalTwin, created: digitalTwinCreated } = await ensureFabricItem(
-    token,
-    workspaceId,
-    'digitaltwinbuilders',
-    'TTCDigitalTwin',
-    {
-      displayName: 'TTCDigitalTwin',
-      description: 'Open-data TTC Vehicle, Route, and Stop ontology.',
-      definition: digitalTwinDefinition(variables),
-    }
-  );
-  if (!digitalTwinCreated) {
-    await updateFabricDefinition(
-      token,
-      workspaceId,
-      'digitaltwinbuilders',
-      digitalTwin.id,
-      digitalTwinDefinition(variables)
-    );
-  }
-
-  variables.DIGITAL_TWIN_BUILDER_ID = digitalTwin.id;
-  const { item: flow, created: flowCreated } = await ensureFabricItem(
-    token,
-    workspaceId,
-    'digitalTwinBuilderFlows',
-    'TTCDigitalTwinRefresh',
-    {
-      displayName: 'TTCDigitalTwinRefresh',
-      description: 'Maps TTC telemetry and contextualizes vehicle relationships.',
-      definition: flowDefinition(variables),
-    }
-  );
-  if (!flowCreated) {
-    await updateFabricDefinition(
-      token,
-      workspaceId,
-      'digitalTwinBuilderFlows',
-      flow.id,
-      flowDefinition(variables)
-    );
-  }
-
   const deployment = {
     tenantId: account.tenantId,
     subscriptionId: account.subscriptionId,
     subscriptionName: account.subscriptionName,
     workspaceId,
-    lakehouseId: lakehouse.id,
     eventhouseId: eventhouse.id,
     kqlDatabaseId: kqlDatabase.id,
+    kqlDatabaseName: 'TTCOperations',
     queryServiceUri,
     eventstreamId: eventstream.id,
     eventstreamSourceName: 'TTCPublisher',
-    digitalTwinBuilderId: digitalTwin.id,
-    digitalTwinBuilderFlowId: flow.id,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');

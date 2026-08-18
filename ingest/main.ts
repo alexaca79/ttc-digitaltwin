@@ -69,8 +69,13 @@ async function main() {
     return;
   }
 
-  server = await startSnapshotServer(config.port, config.allowedOrigin, () => state);
+  server = await startSnapshotServer(config.port, config.allowedOrigin, () => state, config.kql);
   console.log(`Snapshot API listening at http://127.0.0.1:${config.port}/api/snapshot`);
+  console.log(
+    config.kql
+      ? `Eventhouse queries served from /api/live against ${config.kql.database}.`
+      : 'Eventhouse query endpoint disabled; set FABRIC_KQL_QUERY_URI to enable /api/live.'
+  );
   const interval = setInterval(() => void poll(), config.pollIntervalMs);
 
   const stop = () => {

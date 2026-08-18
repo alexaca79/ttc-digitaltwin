@@ -88,4 +88,31 @@ describe('publisher readiness', () => {
       eventstreamEnabled: false,
     });
   });
+
+  it('reports the Eventhouse query endpoint as unavailable when it is not configured', async () => {
+    const state = publisherState({ snapshot });
+    server = await startSnapshotServer(0, 'https://example.test', () => state);
+    const address = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/live`);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Eventhouse query endpoint is not configured.',
+    });
+  });
+
+  it('rejects route performance lookbacks outside the allow list', async () => {
+    const state = publisherState({ snapshot });
+    server = await startSnapshotServer(0, 'https://example.test', () => state, {
+      queryUri: 'https://kusto.invalid',
+      database: 'TTCOperations',
+    });
+    const address = server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/route-performance?lookback=1h)%20|%20take%201`
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: 'Unsupported lookback.' });
+  });
 });
