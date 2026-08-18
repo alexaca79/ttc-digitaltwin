@@ -82,6 +82,16 @@ function notebookDefinition() {
   };
 }
 
+function nativeIngestNotebookDefinition() {
+  return {
+    format: 'fabricGitSource',
+    parts: [
+      textPart('notebook-ingest/notebook-content.py', 'notebook-content.py'),
+      textPart('notebook-ingest/.platform', '.platform'),
+    ],
+  };
+}
+
 function eventstreamDefinition(variables: Record<string, string>) {
   return {
     format: 'eventstream',
@@ -176,11 +186,14 @@ async function main() {
       eventhouse: 'TTCEventhouse',
       kqlDatabase: 'TTCOperations',
       notebook: notebookDefinition(),
+      nativeIngestNotebook: nativeIngestNotebookDefinition(),
       eventstream: eventstreamDefinition(variables),
     };
     console.log(
-      `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts and ` +
-        `${plan.notebook.parts.length} notebook parts routed to ${plan.kqlDatabase}.`
+      `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts, ` +
+        `${plan.notebook.parts.length} decoder notebook parts, and ` +
+        `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts ` +
+        `routed to ${plan.kqlDatabase}.`
     );
     return;
   }
@@ -244,6 +257,27 @@ async function main() {
     await updateFabricDefinition(token, workspaceId, 'notebooks', notebook.id, notebookDefinition());
   }
 
+  const { item: nativeIngestNotebook, created: nativeIngestCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'notebooks',
+    'TTCNativeIngest',
+    {
+      displayName: 'TTCNativeIngest',
+      description: 'Fetches and decodes TTC GTFS-realtime directly into TTCOperations.',
+      definition: nativeIngestNotebookDefinition(),
+    }
+  );
+  if (!nativeIngestCreated) {
+    await updateFabricDefinition(
+      token,
+      workspaceId,
+      'notebooks',
+      nativeIngestNotebook.id,
+      nativeIngestNotebookDefinition()
+    );
+  }
+
   const variables = {
     WORKSPACE_ID: workspaceId,
     KQL_DATABASE_ID: kqlDatabase.id,
@@ -292,6 +326,7 @@ async function main() {
     eventstreamId: eventstream.id,
     eventstreamSourceName: 'TTCPublisher',
     notebookId: notebook.id,
+    nativeIngestNotebookId: nativeIngestNotebook.id,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');
