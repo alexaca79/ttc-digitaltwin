@@ -99,6 +99,19 @@
           "name": "RouteTransitEvents"
         }
       ]
+    },
+    {
+      "name": "TTCFeedDecoder",
+      "type": "Notebook",
+      "properties": {
+        "workspaceId": "{{WORKSPACE_ID}}",
+        "itemId": "{{NOTEBOOK_ID}}"
+      },
+      "inputNodes": [
+        {
+          "name": "TTCTelemetry-stream"
+        }
+      ]
     }
   ]
 }

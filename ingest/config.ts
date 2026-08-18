@@ -17,6 +17,7 @@ export interface PublisherConfig {
   port: number;
   allowedOrigin: string;
   logEvents: boolean;
+  rawFeedMode: boolean;
   eventstream: EventstreamConfig | null;
   kql: KqlQueryConfig | null;
 }
@@ -53,6 +54,7 @@ export function loadConfig(environment = process.env): PublisherConfig {
     port: positiveInteger(environment.PORT, 7071),
     allowedOrigin: environment.PUBLISHER_ALLOWED_ORIGIN ?? '*',
     logEvents: environment.PUBLISHER_LOG_EVENTS === 'true',
+    rawFeedMode: environment.PUBLISHER_RAW_FEED_MODE === 'true',
     eventstream: eventstreamConfigured ? { brokers, topic, username, password } : null,
     kql: kqlQueryUri ? { queryUri: kqlQueryUri, database: kqlDatabase } : null,
   };

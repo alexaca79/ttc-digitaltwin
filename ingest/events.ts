@@ -52,10 +52,28 @@ export interface ServiceAlertEvent {
   source: 'ttc-gtfs-rt';
 }
 
+export type RawFeedName = 'vehicles' | 'trips' | 'alerts';
+
+/**
+ * A whole GTFS-realtime protobuf feed forwarded without decoding. The Fabric
+ * Spark notebook destination decodes it and derives the typed events below.
+ */
+export interface RawFeedEvent {
+  eventType: 'RawFeed';
+  eventId: string;
+  observedAt: string;
+  feed: RawFeedName;
+  encoding: 'gzip+base64';
+  rawBytes: number;
+  payload: string;
+  source: 'ttc-gtfs-rt';
+}
+
 export type NormalizedTransitEvent =
   | VehiclePositionEvent
   | TripUpdateEvent
-  | ServiceAlertEvent;
+  | ServiceAlertEvent
+  | RawFeedEvent;
 
 export interface PollResult {
   snapshot: TransitSnapshot;

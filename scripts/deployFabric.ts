@@ -67,6 +67,21 @@ function jsonPart(path: string, variables: Record<string, string>, definitionPat
   return part(definitionPath, template(readFileSync(join(root, 'fabric', path), 'utf8'), variables));
 }
 
+/** Notebook parts are Python and `.platform` JSON, so they skip JSON validation. */
+function textPart(path: string, definitionPath: string) {
+  return part(definitionPath, readFileSync(join(root, 'fabric', path), 'utf8'));
+}
+
+function notebookDefinition() {
+  return {
+    format: 'fabricGitSource',
+    parts: [
+      textPart('notebook/notebook-content.py', 'notebook-content.py'),
+      textPart('notebook/.platform', '.platform'),
+    ],
+  };
+}
+
 function eventstreamDefinition(variables: Record<string, string>) {
   return {
     format: 'eventstream',
@@ -155,15 +170,17 @@ async function main() {
     const variables = {
       WORKSPACE_ID: dummyGuid,
       KQL_DATABASE_ID: dummyGuid,
+      NOTEBOOK_ID: dummyGuid,
     };
     const plan = {
       eventhouse: 'TTCEventhouse',
       kqlDatabase: 'TTCOperations',
+      notebook: notebookDefinition(),
       eventstream: eventstreamDefinition(variables),
     };
     console.log(
-      `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts ` +
-        `routed to ${plan.kqlDatabase}.`
+      `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts and ` +
+        `${plan.notebook.parts.length} notebook parts routed to ${plan.kqlDatabase}.`
     );
     return;
   }
@@ -212,9 +229,25 @@ async function main() {
   if (!queryServiceUri) throw new Error('KQL database did not expose a query service URI.');
   await applyKqlSchema(token, queryServiceUri);
 
+  const { item: notebook, created: notebookCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'notebooks',
+    'TTCFeedDecoder',
+    {
+      displayName: 'TTCFeedDecoder',
+      description: 'Decodes raw TTC GTFS-realtime protobuf into TTCOperations tables.',
+      definition: notebookDefinition(),
+    }
+  );
+  if (!notebookCreated) {
+    await updateFabricDefinition(token, workspaceId, 'notebooks', notebook.id, notebookDefinition());
+  }
+
   const variables = {
     WORKSPACE_ID: workspaceId,
     KQL_DATABASE_ID: kqlDatabase.id,
+    NOTEBOOK_ID: notebook.id,
   };
   const { item: eventstream, created: eventstreamCreated } = await ensureFabricItem(
     token,
@@ -258,6 +291,7 @@ async function main() {
     queryServiceUri,
     eventstreamId: eventstream.id,
     eventstreamSourceName: 'TTCPublisher',
+    notebookId: notebook.id,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');

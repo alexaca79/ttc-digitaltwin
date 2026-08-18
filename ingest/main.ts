@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { loadConfig } from './config.js';
 import { createEventSink } from './eventSink.js';
 import { openGtfsScheduleLookup, type GtfsScheduleLookup } from './gtfsSchedule.js';
+import { collectRawFeeds } from './rawFeedForwarder.js';
 import { startSnapshotServer, type PublisherState } from './snapshotServer.js';
 import { pollTtcFeeds } from './ttcGtfsRt.js';
 
@@ -29,16 +30,20 @@ async function poll() {
     const result = await pollTtcFeeds(config.feedBaseUrl, scheduleLookup);
     state.snapshot = result.snapshot;
     state.lastPollSucceededAt = new Date().toISOString();
-    await sink.publish(result.events);
+    const events = config.rawFeedMode
+      ? await collectRawFeeds(config.feedBaseUrl)
+      : result.events;
+    await sink.publish(events);
     state.lastPublishSucceededAt = new Date().toISOString();
     state.lastError = null;
     console.log(
       `[${state.lastPollSucceededAt}] ${result.snapshot.vehicles.length} vehicles, ` +
-        `${result.snapshot.alerts.length} alerts, ${result.events.length} events` +
+        `${result.snapshot.alerts.length} alerts, ${events.length} events` +
+        `${config.rawFeedMode ? ' forwarded raw for Fabric decoding' : ''}` +
         `${config.eventstream ? ' published to Fabric Eventstream' : ' normalized locally'}.`
     );
     if (config.logEvents) {
-      for (const event of result.events) console.log(JSON.stringify(event));
+      for (const event of events) console.log(JSON.stringify(event));
     }
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : String(error);
