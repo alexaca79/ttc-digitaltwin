@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -67,20 +67,54 @@ function jsonPart(path: string, variables: Record<string, string>, definitionPat
   return part(definitionPath, template(readFileSync(join(root, 'fabric', path), 'utf8'), variables));
 }
 
-function directoryParts(folder: string, variables: Record<string, string>) {
-  const absoluteFolder = join(root, 'fabric', folder);
-  const files: string[] = [];
-  const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const fullPath = join(directory, entry.name);
-      if (entry.isDirectory()) visit(fullPath);
-      else if (entry.name.endsWith('.json')) files.push(fullPath);
-    }
+/** Notebook parts are Python and `.platform` JSON, so they skip JSON validation. */
+function textPart(path: string, definitionPath: string, variables: Record<string, string> = {}) {
+  let content = readFileSync(join(root, 'fabric', path), 'utf8');
+  for (const [name, value] of Object.entries(variables)) {
+    content = content.replaceAll(`{{${name}}}`, value);
+  }
+  const unresolved = content.match(/{{[A-Z0-9_]+}}/g);
+  if (unresolved) {
+    throw new Error(`Unresolved notebook values: ${[...new Set(unresolved)].join(', ')}`);
+  }
+  return part(definitionPath, content);
+}
+
+function notebookDefinition() {
+  return {
+    format: 'fabricGitSource',
+    parts: [
+      textPart('notebook/notebook-content.py', 'notebook-content.py'),
+      textPart('notebook/.platform', '.platform'),
+    ],
   };
-  visit(absoluteFolder);
-  return files.map((file) =>
-    part(relative(absoluteFolder, file), template(readFileSync(file, 'utf8'), variables))
-  );
+}
+
+function nativeIngestNotebookDefinition(variables: Record<string, string>) {
+  return {
+    format: 'fabricGitSource',
+    parts: [
+      textPart('notebook-ingest/notebook-content.py', 'notebook-content.py', variables),
+      textPart('notebook-ingest/.platform', '.platform'),
+    ],
+  };
+}
+
+/** Static GTFS medallion layers, refreshed daily into the Lakehouse. */
+const MEDALLION_NOTEBOOKS = [
+  { folder: 'notebook-bronze', name: 'TTCScheduleBronze', description: 'Lands the raw TTC static GTFS archive.' },
+  { folder: 'notebook-silver', name: 'TTCScheduleSilver', description: 'Types and cleans the static GTFS stop times.' },
+  { folder: 'notebook-gold', name: 'TTCScheduleGold', description: 'Schedule lookup used for real-time adherence.' },
+] as const;
+
+function medallionNotebookDefinition(folder: string, variables: Record<string, string>) {
+  return {
+    format: 'fabricGitSource',
+    parts: [
+      textPart(`${folder}/notebook-content.py`, 'notebook-content.py', variables),
+      textPart(`${folder}/.platform`, '.platform'),
+    ],
+  };
 }
 
 function eventstreamDefinition(variables: Record<string, string>) {
@@ -153,18 +187,6 @@ async function fabricDefinitionMatches(
   });
 }
 
-function digitalTwinDefinition(variables: Record<string, string>) {
-  return {
-    parts: directoryParts('digital-twin', variables),
-  };
-}
-
-function flowDefinition(variables: Record<string, string>) {
-  return {
-    parts: directoryParts('digital-twin-flow', variables),
-  };
-}
-
 async function applyKqlSchema(token: string, queryServiceUri: string) {
   const kqlToken = getAzureAccessToken('https://kusto.kusto.windows.net');
   const schema = readFileSync(join(root, 'fabric', 'eventhouse', 'DatabaseSchema.kql'), 'utf8');
@@ -183,21 +205,29 @@ async function main() {
     const variables = {
       WORKSPACE_ID: dummyGuid,
       KQL_DATABASE_ID: dummyGuid,
-      LAKEHOUSE_ID: dummyGuid,
-      DIGITAL_TWIN_BUILDER_ID: dummyGuid,
+      NOTEBOOK_ID: dummyGuid,
     };
     const plan = {
-      lakehouse: 'TTCDigitalTwinLakehouse',
       eventhouse: 'TTCEventhouse',
       kqlDatabase: 'TTCOperations',
+      notebook: notebookDefinition(),
+      nativeIngestNotebook: nativeIngestNotebookDefinition({
+        KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
+        LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
+      }),
+      medallionNotebooks: MEDALLION_NOTEBOOKS.map((entry) =>
+        medallionNotebookDefinition(entry.folder, {
+          LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
+        })
+      ),
       eventstream: eventstreamDefinition(variables),
-      digitalTwinBuilder: digitalTwinDefinition(variables),
-      digitalTwinFlow: flowDefinition(variables),
     };
     console.log(
       `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts, ` +
-        `${plan.digitalTwinBuilder.parts.length} Digital Twin Builder parts, ` +
-        `${plan.digitalTwinFlow.parts.length} flow parts.`
+        `${plan.notebook.parts.length} decoder notebook parts, ` +
+        `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts, and ` +
+        `${plan.medallionNotebooks.length} medallion notebooks ` +
+        `routed to ${plan.kqlDatabase}.`
     );
     return;
   }
@@ -217,13 +247,13 @@ async function main() {
     token,
     workspaceId,
     'lakehouses',
-    'TTCDigitalTwinLakehouse',
+    'TTCSchedule',
     {
-      displayName: 'TTCDigitalTwinLakehouse',
-      description: 'Open TTC GTFS data for the macro operations digital twin.',
-      creationPayload: { enableSchemas: true },
+      displayName: 'TTCSchedule',
+      description: 'Static TTC GTFS reference data in bronze, silver, and gold layers.',
     }
   );
+
   const { item: eventhouse } = await ensureFabricItem(
     token,
     workspaceId,
@@ -257,11 +287,71 @@ async function main() {
   if (!queryServiceUri) throw new Error('KQL database did not expose a query service URI.');
   await applyKqlSchema(token, queryServiceUri);
 
+  const { item: notebook, created: notebookCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'notebooks',
+    'TTCFeedDecoder',
+    {
+      displayName: 'TTCFeedDecoder',
+      description: 'Decodes raw TTC GTFS-realtime protobuf into TTCOperations tables.',
+      definition: notebookDefinition(),
+    }
+  );
+  if (!notebookCreated) {
+    await updateFabricDefinition(token, workspaceId, 'notebooks', notebook.id, notebookDefinition());
+  }
+
+  const lakehouseAbfss = `abfss://${workspaceId}@onelake.dfs.fabric.microsoft.com/${lakehouse.id}`;
+  const notebookVariables = {
+    KQL_CLUSTER_URI: queryServiceUri,
+    LAKEHOUSE_ABFSS: lakehouseAbfss,
+  };
+
+  const { item: nativeIngestNotebook, created: nativeIngestCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'notebooks',
+    'TTCNativeIngest',
+    {
+      displayName: 'TTCNativeIngest',
+      description: 'Fetches and decodes TTC GTFS-realtime directly into TTCOperations.',
+      definition: nativeIngestNotebookDefinition(notebookVariables),
+    }
+  );
+  if (!nativeIngestCreated) {
+    await updateFabricDefinition(
+      token,
+      workspaceId,
+      'notebooks',
+      nativeIngestNotebook.id,
+      nativeIngestNotebookDefinition(notebookVariables)
+    );
+  }
+
+  const medallionNotebookIds: Record<string, string> = {};
+  for (const entry of MEDALLION_NOTEBOOKS) {
+    const { item, created } = await ensureFabricItem(token, workspaceId, 'notebooks', entry.name, {
+      displayName: entry.name,
+      description: entry.description,
+      definition: medallionNotebookDefinition(entry.folder, notebookVariables),
+    });
+    if (!created) {
+      await updateFabricDefinition(
+        token,
+        workspaceId,
+        'notebooks',
+        item.id,
+        medallionNotebookDefinition(entry.folder, notebookVariables)
+      );
+    }
+    medallionNotebookIds[entry.name] = item.id;
+  }
+
   const variables = {
     WORKSPACE_ID: workspaceId,
     KQL_DATABASE_ID: kqlDatabase.id,
-    LAKEHOUSE_ID: lakehouse.id,
-    DIGITAL_TWIN_BUILDER_ID: dummyGuid,
+    NOTEBOOK_ID: notebook.id,
   };
   const { item: eventstream, created: eventstreamCreated } = await ensureFabricItem(
     token,
@@ -270,7 +360,7 @@ async function main() {
     'TTCTelemetry',
     {
       displayName: 'TTCTelemetry',
-      description: 'TTC GTFS-realtime Custom Endpoint routed to Eventhouse and Lakehouse.',
+      description: 'TTC GTFS-realtime Custom Endpoint routed to the TTCOperations KQL database.',
       definition: eventstreamDefinition(variables),
     }
   );
@@ -294,62 +384,22 @@ async function main() {
     );
   }
 
-  const { item: digitalTwin, created: digitalTwinCreated } = await ensureFabricItem(
-    token,
-    workspaceId,
-    'digitaltwinbuilders',
-    'TTCDigitalTwin',
-    {
-      displayName: 'TTCDigitalTwin',
-      description: 'Open-data TTC Vehicle, Route, and Stop ontology.',
-      definition: digitalTwinDefinition(variables),
-    }
-  );
-  if (!digitalTwinCreated) {
-    await updateFabricDefinition(
-      token,
-      workspaceId,
-      'digitaltwinbuilders',
-      digitalTwin.id,
-      digitalTwinDefinition(variables)
-    );
-  }
-
-  variables.DIGITAL_TWIN_BUILDER_ID = digitalTwin.id;
-  const { item: flow, created: flowCreated } = await ensureFabricItem(
-    token,
-    workspaceId,
-    'digitalTwinBuilderFlows',
-    'TTCDigitalTwinRefresh',
-    {
-      displayName: 'TTCDigitalTwinRefresh',
-      description: 'Maps TTC telemetry and contextualizes vehicle relationships.',
-      definition: flowDefinition(variables),
-    }
-  );
-  if (!flowCreated) {
-    await updateFabricDefinition(
-      token,
-      workspaceId,
-      'digitalTwinBuilderFlows',
-      flow.id,
-      flowDefinition(variables)
-    );
-  }
-
   const deployment = {
     tenantId: account.tenantId,
     subscriptionId: account.subscriptionId,
     subscriptionName: account.subscriptionName,
     workspaceId,
-    lakehouseId: lakehouse.id,
     eventhouseId: eventhouse.id,
     kqlDatabaseId: kqlDatabase.id,
+    kqlDatabaseName: 'TTCOperations',
     queryServiceUri,
     eventstreamId: eventstream.id,
     eventstreamSourceName: 'TTCPublisher',
-    digitalTwinBuilderId: digitalTwin.id,
-    digitalTwinBuilderFlowId: flow.id,
+    notebookId: notebook.id,
+    nativeIngestNotebookId: nativeIngestNotebook.id,
+    medallionNotebookIds,
+    lakehouseId: lakehouse.id,
+    lakehouseAbfss,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');

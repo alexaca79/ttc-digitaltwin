@@ -5,6 +5,11 @@ export interface EventstreamConfig {
   password: string;
 }
 
+export interface KqlQueryConfig {
+  queryUri: string;
+  database: string;
+}
+
 export interface PublisherConfig {
   feedBaseUrl: string;
   staticGtfsDirectory: string;
@@ -12,7 +17,9 @@ export interface PublisherConfig {
   port: number;
   allowedOrigin: string;
   logEvents: boolean;
+  rawFeedMode: boolean;
   eventstream: EventstreamConfig | null;
+  kql: KqlQueryConfig | null;
 }
 
 function positiveInteger(value: string | undefined, fallback: number) {
@@ -37,6 +44,9 @@ export function loadConfig(environment = process.env): PublisherConfig {
     );
   }
 
+  const kqlQueryUri = environment.FABRIC_KQL_QUERY_URI?.trim() ?? '';
+  const kqlDatabase = environment.FABRIC_KQL_DATABASE?.trim() || 'TTCOperations';
+
   return {
     feedBaseUrl: (environment.TTC_GTFS_RT_BASE_URL ?? 'https://bustime.ttc.ca/gtfsrt').replace(/\/$/, ''),
     staticGtfsDirectory: environment.TTC_GTFS_STATIC_DIR ?? 'data/gtfs-static',
@@ -44,6 +54,8 @@ export function loadConfig(environment = process.env): PublisherConfig {
     port: positiveInteger(environment.PORT, 7071),
     allowedOrigin: environment.PUBLISHER_ALLOWED_ORIGIN ?? '*',
     logEvents: environment.PUBLISHER_LOG_EVENTS === 'true',
+    rawFeedMode: environment.PUBLISHER_RAW_FEED_MODE === 'true',
     eventstream: eventstreamConfigured ? { brokers, topic, username, password } : null,
+    kql: kqlQueryUri ? { queryUri: kqlQueryUri, database: kqlDatabase } : null,
   };
 }

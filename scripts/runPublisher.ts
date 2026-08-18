@@ -17,6 +17,8 @@ interface Deployment {
   workspaceId: string;
   eventstreamId: string;
   eventstreamSourceName: string;
+  queryServiceUri?: string;
+  kqlDatabaseName?: string;
 }
 
 interface TopologySource {
@@ -69,6 +71,8 @@ async function main() {
       FABRIC_EVENTSTREAM_TOPIC: connection.eventHubName,
       FABRIC_EVENTSTREAM_USERNAME: '$ConnectionString',
       FABRIC_EVENTSTREAM_PASSWORD: connection.accessKeys.primaryConnectionString,
+      FABRIC_KQL_QUERY_URI: deployment.queryServiceUri ?? '',
+      FABRIC_KQL_DATABASE: deployment.kqlDatabaseName ?? 'TTCOperations',
     },
     stdio: 'inherit',
     shell: process.platform === 'win32',

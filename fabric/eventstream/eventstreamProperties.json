@@ -1,4 +1,4 @@
 {
   "retentionTimeInDays": 1,
-  "eventThroughputLevel": "Low"
+  "eventThroughputLevel": "Medium"
 }

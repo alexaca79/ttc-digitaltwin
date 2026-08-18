@@ -4,7 +4,6 @@ description: Open-data TTC macro operations twin built with Fabric Real-Time Int
 ms.date: 2026-08-14
 ms.topic: overview
 ---
-
 ## Scope
 
 This workload is a macro operations and service twin for the Toronto Transit
@@ -36,15 +35,18 @@ flowchart LR
 
   subgraph Azure["Azure Container Apps"]
     Publisher["TTC publisher<br/>poll, decode, normalize"]
-    Snapshot["Snapshot API<br/>/api/snapshot and /api/health"]
+    Snapshot["Snapshot and query API<br/>/api/live, /api/snapshot, /api/health"]
   end
 
   subgraph Fabric["Microsoft Fabric workspace: TTC Digital Twin Test"]
     Eventstream["TTCTelemetry Eventstream<br/>Custom Endpoint and SQL router"]
-    Eventhouse["TTCOperations KQL database<br/>RTI tables"]
-    Lakehouse["TTCDigitalTwinLakehouse<br/>vehicle positions"]
-    Refresh["TTCDigitalTwinRefresh<br/>Digital Twin Builder flow"]
-    Twin["TTCDigitalTwin<br/>Digital Twin Builder"]
+    Eventhouse["TTCOperations KQL database<br/>live telemetry store"]
+    Ingest["TTCNativeIngest notebook<br/>fetch, decode, enrich"]
+    subgraph Lakehouse["TTCSchedule Lakehouse: static GTFS, daily"]
+      Bronze["bronze_stop_times<br/>as published"]
+      Silver["silver_stop_times<br/>typed and cleaned"]
+      Gold["gold_schedule_lookup<br/>trip and stop grain"]
+    end
     Rayfin["Rayfin AppBackend<br/>Fabric SSO and static hosting"]
     SQL["Rayfin managed SQL<br/>OperatorNote"]
     Queries["KQL and real-time<br/>dashboard queries"]
@@ -54,31 +56,40 @@ flowchart LR
 
   Live --> Publisher
   Static --> Publisher
-  Publisher --> Snapshot
+  Static -->|"daily archive"| Bronze
+  Bronze --> Silver --> Gold
+  Live --> Ingest
+  Gold -->|"schedule adherence"| Ingest
+  Ingest --> Eventhouse
   Publisher -->|"Kafka batches"| Eventstream
   Eventstream -->|"processed ingestion"| Eventhouse
-  Eventstream -->|"vehicle positions"| Lakehouse
   Eventhouse --> Queries
-  Lakehouse --> Refresh --> Twin
-  Snapshot -->|"HTTPS snapshot"| Browser
+  Queries -->|"CurrentFleet and ActiveAlerts"| Snapshot
+  Snapshot -->|"HTTPS live fleet"| Browser
   Tiles --> Browser
   Browser <-->|"Fabric SSO and typed data API"| Rayfin
   Rayfin --> SQL
 ```
 
+Static reference data and live telemetry are deliberately separated. The
+schedule changes daily and belongs in a Lakehouse, where medallion layers keep
+the published archive, the typed form, and the serving grain distinct. Vehicle
+telemetry changes every few seconds and belongs in Eventhouse, where KQL answers
+the dashboard directly.
+
 ### Component Responsibilities
 
-| Layer | Deployed component | Responsibility |
-| --- | --- | --- |
-| Ingestion | Container App | Normalize and publish TTC events |
-| Live API | HTTPS ingress | Serve snapshots and health status |
-| Stream routing | `TTCTelemetry` | Route vehicles, trips, and alerts |
-| Hot analytics | `TTCOperations` | Store real-time KQL tables |
-| Lakehouse | Lakehouse | Persist bronze vehicle positions |
-| Twin model | Digital Twin Builder | Map entities and relationships |
-| Application | Rayfin AppBackend | Host React, SSO, and the data API |
-| Operator data | Managed SQL | Store user-scoped operator notes |
-| Map | Leaflet and MapLibre | Render 2D fallback and optional 3D buildings |
+| Layer          | Deployed component   | Responsibility                       |
+| -------------- | -------------------- | ------------------------------------ |
+| Ingestion      | Container App        | Normalize and publish TTC events     |
+| Live API       | HTTPS ingress        | Serve KQL results and health         |
+| Stream routing | `TTCTelemetry`       | Route vehicles, trips, and alerts    |
+| Live store     | `TTCOperations`      | Hold telemetry tables and functions  |
+| Static store   | `TTCSchedule`        | Hold GTFS bronze, silver, gold       |
+| Fabric ingest  | `TTCNativeIngest`    | Fetch, decode, and enrich in Fabric  |
+| Application    | Rayfin AppBackend    | Host React, SSO, and the data API    |
+| Operator data  | Managed SQL          | Store user-scoped operator notes     |
+| Map            | Leaflet and MapLibre | Render 2D and optional 3D views      |
 
 > [!NOTE]
 > The 2D Leaflet map remains the default and fallback. The optional 3D view
@@ -89,15 +100,15 @@ flowchart LR
 
 ### Published Deployment
 
-| Resource | Published value |
-| --- | --- |
-| Source | [alexaca79/ttc-digitaltwin][source-repository] |
-| Fabric app | [TTC Digital Twin][fabric-app] |
-| Fabric workspace | `TTC Digital Twin Test` |
-| Fabric capacity | `rayfintestenv` (`F64`) |
-| Publisher API | [Publisher health endpoint][publisher-health] |
-| Publisher scaling | One warm replica, 0.5 CPU, 1 GiB memory |
-| Eventstream source | `TTCPublisher` Custom Endpoint |
+| Resource           | Published value                                |
+| ------------------ | ---------------------------------------------- |
+| Source             | [alexaca79/ttc-digitaltwin][source-repository] |
+| Fabric app         | [TTC Digital Twin][fabric-app]                 |
+| Fabric workspace   | `TTC Digital Twin Test`                        |
+| Fabric capacity    | `rayfintestenv` (`F64`)                        |
+| Publisher API      | [Publisher health endpoint][publisher-health]  |
+| Publisher scaling  | One warm replica, 0.5 CPU, 1 GiB memory        |
+| Eventstream source | `TTCPublisher` Custom Endpoint                 |
 
 ### Security Boundaries
 
@@ -116,7 +127,6 @@ flowchart LR
 [fabric-app]: https://happy-ferry-38f69258e5-westus2.webapp.fabricapps.net/
 [publisher-health]: https://ca-ttc-digital-twin-publisher.thankfulplant-49ee7bc3.eastus2.azurecontainerapps.io/api/health
 [source-repository]: https://github.com/alexaca79/ttc-digitaltwin
-
 The Eventstream uses processed ingestion, so the workload can be deployed
 through the Fabric REST API without a portal-created Eventhouse connection.
 
@@ -152,7 +162,8 @@ Start the dashboard in a second terminal:
 npm run dev:demo
 ```
 
-Open <http://localhost:5173>. Demo authentication is automatic. Operator notes
+Open [http://localhost:5173](http://localhost:5173). Demo authentication is
+automatic. Operator notes
 use browser local storage in demo mode. When the publisher is unavailable, the
 dashboard switches to clearly labeled deterministic simulation data.
 
@@ -161,9 +172,7 @@ dashboard switches to clearly labeled deterministic simulation data.
 * A Fabric workspace assigned to supported capacity
 * Contributor or higher workspace role
 * Fabric Apps (preview) enabled by the tenant administrator
-* Digital Twin Builder (preview) enabled by the tenant administrator
-* Autoscale Billing for Spark disabled for the tenant because Digital Twin
- Builder does not currently support it
+* Permission to grant the publisher identity viewer access on `TTCOperations`
 * Azure CLI signed in with an isolated `AZURE_CONFIG_DIR`
 
 Set the isolated Azure CLI context before any Fabric operation. The active
@@ -197,16 +206,36 @@ npm run fabric:deploy -- `
 You can use `--workspace-id` instead of `--workspace-name`. The script creates
 or reuses these items:
 
-* `TTCDigitalTwinLakehouse`
-* `TTCEventhouse`
-* `TTCOperations` KQL database
+* `TTCEventhouse` and the `TTCOperations` KQL database
 * `TTCTelemetry` Eventstream
-* `TTCDigitalTwin` Digital Twin Builder
-* `TTCDigitalTwinRefresh` Digital Twin Builder flow
+* `TTCSchedule` Lakehouse for static GTFS
+* `TTCScheduleBronze`, `TTCScheduleSilver`, and `TTCScheduleGold` notebooks
+* `TTCNativeIngest` notebook for container-free ingestion
+* `TTCFeedDecoder` notebook for the Eventstream decode path
 
-The Digital Twin Builder flow groups the Vehicle, Route, and Stop mappings and
-their relationships. Run or schedule `TTCDigitalTwinRefresh` from Fabric after
-the first Lakehouse events create `bronze.ttc_vehicle_positions`.
+Notebook parameter defaults are templated with the resolved Lakehouse and
+Eventhouse identifiers, because Fabric schedules cannot pass parameters.
+
+`TTCScheduleBronze` downloads the City of Toronto GTFS archive and chains silver
+and gold, so one daily schedule refreshes the whole static chain. Register it to
+run daily at 03:00 Eastern:
+
+```powershell
+$Deployment = Get-Content .fabric/deployment.local.json | ConvertFrom-Json
+$Body = @{
+  enabled       = $true
+  configuration = @{
+    type            = 'Daily'
+    startDateTime   = '2026-08-19T03:00:00'
+    endDateTime     = '2030-01-01T00:00:00'
+    localTimeZoneId = 'Eastern Standard Time'
+    times           = @('03:00')
+  }
+} | ConvertTo-Json -Depth 6
+```
+
+Post that body to the bronze notebook's `jobs/RunNotebook/schedules` endpoint.
+Schedule adherence stays null until the gold table exists.
 
 Start the live publisher against the deployed Eventstream:
 
@@ -229,16 +258,16 @@ events independently.
 
 ## Data Sources
 
-* TTC BusTime GTFS-realtime: <https://bustime.ttc.ca/gtfsrt>
+* TTC BusTime GTFS-realtime: [https://bustime.ttc.ca/gtfsrt](https://bustime.ttc.ca/gtfsrt)
 * TTC merged routes and schedules:
- <https://open.toronto.ca/dataset/merged-gtfs-ttc-routes-and-schedules/>
+  [https://open.toronto.ca/dataset/merged-gtfs-ttc-routes-and-schedules/](https://open.toronto.ca/dataset/merged-gtfs-ttc-routes-and-schedules/)
 * City of Toronto Open Data Licence:
- <https://open.toronto.ca/open-data-licence/>
-* Leaflet map renderer: <https://leafletjs.com/>
-* MapLibre GL JS renderer: <https://maplibre.org/maplibre-gl-js/docs/>
-* OpenFreeMap vector tiles: <https://openfreemap.org/>
+  [https://open.toronto.ca/open-data-licence/](https://open.toronto.ca/open-data-licence/)
+* Leaflet map renderer: [https://leafletjs.com/](https://leafletjs.com/)
+* MapLibre GL JS renderer: [https://maplibre.org/maplibre-gl-js/docs/](https://maplibre.org/maplibre-gl-js/docs/)
+* OpenFreeMap vector tiles: [https://openfreemap.org/](https://openfreemap.org/)
 * OpenStreetMap standard tiles and map data:
-  <https://www.openstreetmap.org/copyright>
+  [https://www.openstreetmap.org/copyright](https://www.openstreetmap.org/copyright)
 
 The generated static asset records its source URL, generation time, and licence
 URL. The current verified sync produced 224 routes, 11,946 stops, 133,557 trips,
@@ -259,17 +288,17 @@ public/data/            Generated compact TTC network asset
 
 ## Commands
 
-| Command | Purpose |
-| --------- | --------- |
-| `npm run dev:demo` | Run the local dashboard without Rayfin Docker services |
-| `npm run ingest` | Poll TTC and expose the local snapshot API continuously |
-| `npm run ingest:once` | Decode and normalize one live TTC poll |
-| `npm run gtfs:sync` | Refresh static TTC data and rebuild the schedule index |
-| `npm run fabric:plan` | Validate all parameterized Fabric definitions |
-| `npm run fabric:deploy` | Provision or update the Fabric RTI workload |
-| `npm run fabric:publisher` | Publish to the Custom Endpoint |
-| `npm run rayfin:up` | Deploy the Rayfin Fabric App |
-| `npm run build` | Create a production frontend build |
-| `npm run typecheck:tools` | Type-check publisher and deployment scripts |
-| `npm test` | Run the Vitest suite |
-| `npm run lint` | Run ESLint |
+| Command                    | Purpose                                      |
+| -------------------------- | -------------------------------------------- |
+| `npm run dev:demo`         | Run the dashboard without Rayfin services    |
+| `npm run ingest`           | Poll TTC and expose the local snapshot API   |
+| `npm run ingest:once`      | Decode and normalize one live TTC poll       |
+| `npm run gtfs:sync`        | Refresh static TTC data and schedule index   |
+| `npm run fabric:plan`      | Validate parameterized Fabric definitions    |
+| `npm run fabric:deploy`    | Provision or update the Fabric workload      |
+| `npm run fabric:publisher` | Publish to the Custom Endpoint               |
+| `npm run rayfin:up`        | Deploy the Rayfin Fabric App                 |
+| `npm run build`            | Create a production frontend build           |
+| `npm run typecheck:tools`  | Type-check publisher and deploy scripts      |
+| `npm test`                 | Run the Vitest suite                         |
+| `npm run lint`             | Run ESLint                                   |

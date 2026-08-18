@@ -16,15 +16,25 @@ function simulatedSnapshot(now = new Date()): TransitSnapshot {
   };
 }
 
-async function requestLiveSnapshot(signal: AbortSignal): Promise<TransitSnapshot> {
-  if (!telemetryApiUrl) throw new Error('Live telemetry API is not configured.');
-  const response = await fetch(`${telemetryApiUrl}/api/snapshot`, { signal });
+async function requestSnapshotFrom(path: string, signal: AbortSignal): Promise<TransitSnapshot> {
+  const response = await fetch(`${telemetryApiUrl}${path}`, { signal });
   if (!response.ok) throw new Error(`Telemetry API returned ${response.status}.`);
   const snapshot = (await response.json()) as TransitSnapshot;
   if (!Array.isArray(snapshot.vehicles) || !Array.isArray(snapshot.alerts)) {
     throw new Error('Telemetry API returned an invalid snapshot.');
   }
   return snapshot;
+}
+
+/** Prefer the Eventhouse KQL projection, then fall back to the publisher's in-memory snapshot. */
+async function requestLiveSnapshot(signal: AbortSignal): Promise<TransitSnapshot> {
+  if (!telemetryApiUrl) throw new Error('Live telemetry API is not configured.');
+  try {
+    return await requestSnapshotFrom('/api/live', signal);
+  } catch (caught) {
+    if (caught instanceof DOMException && caught.name === 'AbortError') throw caught;
+    return requestSnapshotFrom('/api/snapshot', signal);
+  }
 }
 
 export function useTransitFeed() {

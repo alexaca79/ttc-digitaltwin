@@ -1,8 +1,0 @@
-{
-  "Id": "72026081320002",
-  "Namespace": "usertypes",
-  "RelationshipCardinality": "ManyToOne",
-  "Name": "approaches",
-  "FirstEntityTypeId": "72026081310001",
-  "SecondEntityTypeId": "72026081310003"
-}

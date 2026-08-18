@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { loadConfig } from './config.js';
 import { createEventSink } from './eventSink.js';
 import { openGtfsScheduleLookup, type GtfsScheduleLookup } from './gtfsSchedule.js';
+import { collectRawFeeds } from './rawFeedForwarder.js';
 import { startSnapshotServer, type PublisherState } from './snapshotServer.js';
 import { pollTtcFeeds } from './ttcGtfsRt.js';
 
@@ -29,16 +30,20 @@ async function poll() {
     const result = await pollTtcFeeds(config.feedBaseUrl, scheduleLookup);
     state.snapshot = result.snapshot;
     state.lastPollSucceededAt = new Date().toISOString();
-    await sink.publish(result.events);
+    const events = config.rawFeedMode
+      ? await collectRawFeeds(config.feedBaseUrl)
+      : result.events;
+    await sink.publish(events);
     state.lastPublishSucceededAt = new Date().toISOString();
     state.lastError = null;
     console.log(
       `[${state.lastPollSucceededAt}] ${result.snapshot.vehicles.length} vehicles, ` +
-        `${result.snapshot.alerts.length} alerts, ${result.events.length} events` +
+        `${result.snapshot.alerts.length} alerts, ${events.length} events` +
+        `${config.rawFeedMode ? ' forwarded raw for Fabric decoding' : ''}` +
         `${config.eventstream ? ' published to Fabric Eventstream' : ' normalized locally'}.`
     );
     if (config.logEvents) {
-      for (const event of result.events) console.log(JSON.stringify(event));
+      for (const event of events) console.log(JSON.stringify(event));
     }
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : String(error);
@@ -69,8 +74,13 @@ async function main() {
     return;
   }
 
-  server = await startSnapshotServer(config.port, config.allowedOrigin, () => state);
+  server = await startSnapshotServer(config.port, config.allowedOrigin, () => state, config.kql);
   console.log(`Snapshot API listening at http://127.0.0.1:${config.port}/api/snapshot`);
+  console.log(
+    config.kql
+      ? `Eventhouse queries served from /api/live against ${config.kql.database}.`
+      : 'Eventhouse query endpoint disabled; set FABRIC_KQL_QUERY_URI to enable /api/live.'
+  );
   const interval = setInterval(() => void poll(), config.pollIntervalMs);
 
   const stop = () => {
