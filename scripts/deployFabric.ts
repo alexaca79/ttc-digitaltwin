@@ -68,8 +68,16 @@ function jsonPart(path: string, variables: Record<string, string>, definitionPat
 }
 
 /** Notebook parts are Python and `.platform` JSON, so they skip JSON validation. */
-function textPart(path: string, definitionPath: string) {
-  return part(definitionPath, readFileSync(join(root, 'fabric', path), 'utf8'));
+function textPart(path: string, definitionPath: string, variables: Record<string, string> = {}) {
+  let content = readFileSync(join(root, 'fabric', path), 'utf8');
+  for (const [name, value] of Object.entries(variables)) {
+    content = content.replaceAll(`{{${name}}}`, value);
+  }
+  const unresolved = content.match(/{{[A-Z0-9_]+}}/g);
+  if (unresolved) {
+    throw new Error(`Unresolved notebook values: ${[...new Set(unresolved)].join(', ')}`);
+  }
+  return part(definitionPath, content);
 }
 
 function notebookDefinition() {
@@ -82,12 +90,29 @@ function notebookDefinition() {
   };
 }
 
-function nativeIngestNotebookDefinition() {
+function nativeIngestNotebookDefinition(variables: Record<string, string>) {
   return {
     format: 'fabricGitSource',
     parts: [
-      textPart('notebook-ingest/notebook-content.py', 'notebook-content.py'),
+      textPart('notebook-ingest/notebook-content.py', 'notebook-content.py', variables),
       textPart('notebook-ingest/.platform', '.platform'),
+    ],
+  };
+}
+
+/** Static GTFS medallion layers, refreshed daily into the Lakehouse. */
+const MEDALLION_NOTEBOOKS = [
+  { folder: 'notebook-bronze', name: 'TTCScheduleBronze', description: 'Lands the raw TTC static GTFS archive.' },
+  { folder: 'notebook-silver', name: 'TTCScheduleSilver', description: 'Types and cleans the static GTFS stop times.' },
+  { folder: 'notebook-gold', name: 'TTCScheduleGold', description: 'Schedule lookup used for real-time adherence.' },
+] as const;
+
+function medallionNotebookDefinition(folder: string, variables: Record<string, string>) {
+  return {
+    format: 'fabricGitSource',
+    parts: [
+      textPart(`${folder}/notebook-content.py`, 'notebook-content.py', variables),
+      textPart(`${folder}/.platform`, '.platform'),
     ],
   };
 }
@@ -186,13 +211,22 @@ async function main() {
       eventhouse: 'TTCEventhouse',
       kqlDatabase: 'TTCOperations',
       notebook: notebookDefinition(),
-      nativeIngestNotebook: nativeIngestNotebookDefinition(),
+      nativeIngestNotebook: nativeIngestNotebookDefinition({
+        KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
+        LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
+      }),
+      medallionNotebooks: MEDALLION_NOTEBOOKS.map((entry) =>
+        medallionNotebookDefinition(entry.folder, {
+          LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
+        })
+      ),
       eventstream: eventstreamDefinition(variables),
     };
     console.log(
       `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts, ` +
-        `${plan.notebook.parts.length} decoder notebook parts, and ` +
-        `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts ` +
+        `${plan.notebook.parts.length} decoder notebook parts, ` +
+        `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts, and ` +
+        `${plan.medallionNotebooks.length} medallion notebooks ` +
         `routed to ${plan.kqlDatabase}.`
     );
     return;
@@ -208,6 +242,17 @@ async function main() {
   const account = assertAzureContext(args.tenantId, args.subscription);
   const token = getAzureAccessToken('https://api.fabric.microsoft.com');
   const workspaceId = await resolveWorkspaceId(token, args.workspaceId, args.workspaceName);
+
+  const { item: lakehouse } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'lakehouses',
+    'TTCSchedule',
+    {
+      displayName: 'TTCSchedule',
+      description: 'Static TTC GTFS reference data in bronze, silver, and gold layers.',
+    }
+  );
 
   const { item: eventhouse } = await ensureFabricItem(
     token,
@@ -257,6 +302,12 @@ async function main() {
     await updateFabricDefinition(token, workspaceId, 'notebooks', notebook.id, notebookDefinition());
   }
 
+  const lakehouseAbfss = `abfss://${workspaceId}@onelake.dfs.fabric.microsoft.com/${lakehouse.id}`;
+  const notebookVariables = {
+    KQL_CLUSTER_URI: queryServiceUri,
+    LAKEHOUSE_ABFSS: lakehouseAbfss,
+  };
+
   const { item: nativeIngestNotebook, created: nativeIngestCreated } = await ensureFabricItem(
     token,
     workspaceId,
@@ -265,7 +316,7 @@ async function main() {
     {
       displayName: 'TTCNativeIngest',
       description: 'Fetches and decodes TTC GTFS-realtime directly into TTCOperations.',
-      definition: nativeIngestNotebookDefinition(),
+      definition: nativeIngestNotebookDefinition(notebookVariables),
     }
   );
   if (!nativeIngestCreated) {
@@ -274,8 +325,27 @@ async function main() {
       workspaceId,
       'notebooks',
       nativeIngestNotebook.id,
-      nativeIngestNotebookDefinition()
+      nativeIngestNotebookDefinition(notebookVariables)
     );
+  }
+
+  const medallionNotebookIds: Record<string, string> = {};
+  for (const entry of MEDALLION_NOTEBOOKS) {
+    const { item, created } = await ensureFabricItem(token, workspaceId, 'notebooks', entry.name, {
+      displayName: entry.name,
+      description: entry.description,
+      definition: medallionNotebookDefinition(entry.folder, notebookVariables),
+    });
+    if (!created) {
+      await updateFabricDefinition(
+        token,
+        workspaceId,
+        'notebooks',
+        item.id,
+        medallionNotebookDefinition(entry.folder, notebookVariables)
+      );
+    }
+    medallionNotebookIds[entry.name] = item.id;
   }
 
   const variables = {
@@ -327,6 +397,9 @@ async function main() {
     eventstreamSourceName: 'TTCPublisher',
     notebookId: notebook.id,
     nativeIngestNotebookId: nativeIngestNotebook.id,
+    medallionNotebookIds,
+    lakehouseId: lakehouse.id,
+    lakehouseAbfss,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');

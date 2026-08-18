@@ -77,12 +77,44 @@ The deployment script creates or reuses the following names.
 | `TTCEventhouse` | `scripts/deployFabric.ts` |
 | `TTCOperations` | `fabric/eventhouse/` |
 | `TTCTelemetry` | `fabric/eventstream/` |
+| `TTCSchedule` | `scripts/deployFabric.ts` |
+| `TTCScheduleBronze` | `fabric/notebook-bronze/` |
+| `TTCScheduleSilver` | `fabric/notebook-silver/` |
+| `TTCScheduleGold` | `fabric/notebook-gold/` |
+| `TTCNativeIngest` | `fabric/notebook-ingest/` |
+| `TTCFeedDecoder` | `fabric/notebook/` |
 | Rayfin AppBackend | `rayfin/rayfin.yml` |
 | Rayfin managed SQL | `rayfin/data/` |
 
 The deployment is idempotent by item name. Existing Eventstream definitions
 are compared before update. The KQL schema uses create-or-merge and
-create-or-alter operations.
+create-or-alter operations. Notebook parameter defaults are templated with the
+resolved Lakehouse and Eventhouse identifiers at deploy time, so scheduled runs
+need no arguments.
+
+## Static Reference Data
+
+Schedule adherence needs the published timetable, which the realtime feed does
+not carry. The `TTCSchedule` Lakehouse holds it in medallion layers:
+
+| Table | Layer | Contents |
+| --- | --- | --- |
+| `bronze_stop_times` | Bronze | `stop_times.txt` as published |
+| `bronze_trips` | Bronze | `trips.txt` as published, plus provenance |
+| `silver_stop_times` | Silver | Typed rows with clock times parsed to seconds |
+| `gold_schedule_lookup` | Gold | One row per trip and stop sequence |
+
+`TTCScheduleBronze` downloads the City of Toronto GTFS archive and chains silver
+and gold, so one daily schedule refreshes the whole chain. A daily 03:00 Eastern
+schedule is registered against the bronze notebook.
+
+GTFS allows clock times beyond `24:00:00` for trips crossing midnight, so the
+silver layer parses the components rather than casting to a timestamp.
+
+> [!NOTE]
+> Static reference data lives in the Lakehouse because it changes daily and
+> benefits from layered refinement. Live telemetry lives in Eventhouse because
+> it changes every few seconds and is queried with KQL. Do not merge the two.
 
 ## Data Contracts and Retention
 
