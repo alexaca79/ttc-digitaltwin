@@ -1,0 +1,13 @@
+*
+!Dockerfile.publisher
+!publisher/
+!publisher/**
+!ingest/
+!ingest/**
+!src/
+!src/types/
+!src/types/**
+!data/
+!data/gtfs-static/
+!data/gtfs-static/stop_times.txt
+!data/gtfs-static/schedule-offsets.json

@@ -1,0 +1,88 @@
+.execute database script with (ContinueOnErrors=false) <|
+.create-merge table VehiclePositions (
+    EventId:string,
+    ObservedAt:datetime,
+    VehicleId:string,
+    VehicleLabel:string,
+    TripId:string,
+    RouteId:string,
+    Mode:string,
+    Latitude:real,
+    Longitude:real,
+    Bearing:real,
+    SpeedKph:real,
+    ScheduleDeviationSeconds:long,
+    Occupancy:string,
+    State:string,
+    StopId:string,
+    CurrentStatus:string,
+    Source:string
+)
+.create-merge table TripUpdates (
+    EventId:string,
+    ObservedAt:datetime,
+    TripId:string,
+    RouteId:string,
+    VehicleId:string,
+    StopId:string,
+    StopSequence:long,
+    ArrivalEpochSeconds:long,
+    DepartureEpochSeconds:long,
+    DelaySeconds:long,
+    Source:string
+)
+.create-merge table ServiceAlerts (
+    EventId:string,
+    ObservedAt:datetime,
+    AlertId:string,
+    Severity:string,
+    Title:string,
+    Description:string,
+    RouteIds:dynamic,
+    Cause:string,
+    Effect:string,
+    ActiveStartEpochSeconds:long,
+    ActiveEndEpochSeconds:long,
+    Source:string
+)
+.alter table VehiclePositions policy retention '{"SoftDeletePeriod":"30.00:00:00","Recoverability":"Enabled"}'
+.alter table TripUpdates policy retention '{"SoftDeletePeriod":"30.00:00:00","Recoverability":"Enabled"}'
+.alter table ServiceAlerts policy retention '{"SoftDeletePeriod":"90.00:00:00","Recoverability":"Enabled"}'
+.alter table VehiclePositions policy caching hot = 7d
+.alter table TripUpdates policy caching hot = 7d
+.alter table ServiceAlerts policy caching hot = 30d
+.alter table VehiclePositions policy streamingingestion enable
+.alter table TripUpdates policy streamingingestion enable
+.alter table ServiceAlerts policy streamingingestion enable
+.create-or-alter function with (folder='TTC Digital Twin', docstring='Latest observation for every active TTC vehicle') CurrentFleet() {
+    VehiclePositions
+    | where ObservedAt > ago(10m)
+    | summarize arg_max(ObservedAt, *) by VehicleId
+}
+.create-or-alter function with (folder='TTC Digital Twin', docstring='Route schedule adherence over the selected time window') RoutePerformance(Lookback:timespan = 30m) {
+    VehiclePositions
+    | where ObservedAt > ago(Lookback)
+    | summarize
+        Vehicles=dcount(VehicleId),
+                ScheduleReported=countif(isnotnull(ScheduleDeviationSeconds)),
+                OnTimeVehicles=countif(
+                    isnotnull(ScheduleDeviationSeconds)
+                    and ScheduleDeviationSeconds >= -120
+                    and ScheduleDeviationSeconds <= 180
+                ),
+        Delayed=countif(ScheduleDeviationSeconds > 180),
+        P95DelaySeconds=percentile(ScheduleDeviationSeconds, 95)
+      by RouteId, Mode
+        | extend OnTimePercent=iff(
+                ScheduleReported == 0,
+                real(null),
+                round(100.0 * OnTimeVehicles / ScheduleReported, 1)
+            )
+        | project RouteId, Mode, Vehicles, ScheduleReported, OnTimeVehicles, OnTimePercent, Delayed, P95DelaySeconds
+    | order by Delayed desc
+}
+.create-or-alter function with (folder='TTC Digital Twin', docstring='Currently active TTC service alerts') ActiveAlerts() {
+    ServiceAlerts
+    | summarize arg_max(ObservedAt, *) by AlertId
+    | where ActiveEndEpochSeconds == 0 or unixtime_seconds_todatetime(ActiveEndEpochSeconds) > now()
+}
