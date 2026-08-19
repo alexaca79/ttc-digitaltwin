@@ -1,7 +1,7 @@
 ---
 title: TTC Digital Twin
 description: Open-data TTC macro operations twin built with Fabric Real-Time Intelligence and Rayfin
-ms.date: 2026-08-14
+ms.date: 2026-08-19
 ms.topic: overview
 ---
 ## Scope
@@ -9,6 +9,9 @@ ms.topic: overview
 This workload is a macro operations and service twin for the Toronto Transit
 Commission. It combines Microsoft Fabric Real-Time Intelligence with a Rayfin
 Fabric App.
+
+![Toronto Transit Digital Twin operations control dashboard showing a 3D
+streetcar route map and live service metrics](docs/images/ttc-digital-twin-operations-control.png)
 
 To deploy it, start with the
 [deployment quickstart](DEPLOYMENT-QUICKSTART.md). For operations, rollback,
