@@ -1,7 +1,7 @@
 ---
 title: TTC Digital Twin Deployment and Operations Guide
 description: End-to-end deployment, validation, recovery, and data roadmap for the Fabric and Rayfin workload
-ms.date: 2026-08-15
+ms.date: 2026-08-20
 ms.topic: how-to
 ---
 
@@ -36,14 +36,57 @@ Fabric contains the operational data plane after ingestion:
 
 One component remains outside Fabric. The TTC publisher must continuously poll
 an external HTTP feed every 15 seconds and expose the latest snapshot over
-HTTPS. This repository runs that component as one Azure Container App replica.
-Fabric does not otherwise depend on Azure compute.
+HTTPS. The current supported deployment runs that component as one Azure
+Container App replica. Treat ACA as a temporary runtime boundary until a
+Fabric-native replacement completes the validation gates described below.
 
 > [!IMPORTANT]
 > The current system is mostly self-contained in Fabric, not fully
-> self-contained. A fully Fabric-native design requires either direct TTC event
-> delivery into Eventstream or a supported Fabric service that can perform
-> continuous 15-second polling and serve the authenticated snapshot API.
+> self-contained. Keep ACA in place for production ingestion and live API
+> traffic. The potential replacement is an architecture option, not an
+> implemented or supported deployment path.
+
+### Potential ACA-free architecture
+
+See [Fabric-Native Publisher Alternative](FABRIC-NATIVE-ALTERNATIVE.md) for the
+full decision record, verified platform limitations, and removal gates.
+
+ACA currently owns three responsibilities:
+
+1. Poll the TTC GTFS-realtime feeds every 15 seconds.
+2. Decode and normalize Protobuf messages before writing telemetry to
+   Eventhouse.
+3. Serve live snapshots, fallback data, route analytics, health, readiness,
+   and throttling over HTTPS.
+
+A future Fabric and Rayfin-only design could replace those responsibilities
+with:
+
+* Long-running Fabric notebooks for TTC polling, Protobuf decoding, schedule
+  enrichment, and Eventhouse ingestion
+* OneLake files for live and fallback snapshot caches
+* An authenticated serving API for snapshots, route analytics, health, and
+  readiness; runtime selection and Fabric SSO validation remain open design
+  decisions
+
+The TTC endpoints do not currently expose JSON. Requests for `vehicles`,
+`trips`, and `alerts` return `application/x-google-protobuf` even when the
+caller requests JSON. The `?debug` variant returns Protobuf text notation, not
+JSON. Fabric Eventstream's HTTP source accepts JSON responses only, and
+Eventhouse has no Protobuf ingestion mapping. The replacement therefore still
+needs a Fabric-hosted decoding step; it cannot connect the TTC HTTP feed
+directly to Eventhouse.
+
+Fabric notebooks also have a seven-day maximum job runtime. Continuous
+operation would require overlapping pollers, leader election, fencing, and
+automatic recovery during notebook handoffs. This design can preserve product
+capabilities, but it cannot promise a gap-free 15-second cadence at every
+handoff. Overlapping pollers add unmeasured Fabric CU consumption while
+replacing the current 0.5-vCPU, 1-GiB ACA replica.
+
+Do not remove ACA until an implementation passes shadow comparison, forced
+failover, dependency-failure, and multi-day soak tests while preserving the
+existing browser and Eventhouse contracts.
 
 Telemetry storage is deliberately single-tier.
 
@@ -128,17 +171,19 @@ Three paths can populate `TTCOperations`. Only the first is enabled by default.
 | Path | Component | Enabled by |
 | --- | --- | --- |
 | Decoded publisher | Container App and Eventstream | Default |
-| Raw forward | Container App and `TTCFeedDecoder` | `PUBLISHER_RAW_FEED_MODE` |
-| Fabric native | `TTCNativeIngest` notebook | Running the notebook |
+| Raw forward | ACA and decoder notebook | `PUBLISHER_RAW_FEED_MODE` |
+| Native prototype | `TTCNativeIngest` notebook | Manual notebook run |
 
 The decoded path normalizes events in the container and lets the Eventstream SQL
 operator route them. The raw path forwards undecoded protobuf, gzip and base64
 encoded, and decodes it in a Spark notebook destination. The native path removes
 the container from ingestion entirely by fetching and decoding inside Fabric.
 
-All three write the same tables, so the application is unaffected by the choice.
-Running more than one at a time duplicates rows; `CurrentFleet()` collapses them
-with `arg_max` per vehicle, so the map stays correct while storage grows.
+These are ingestion choices only. All three write the same Eventhouse tables,
+but `TTCNativeIngest` does not replace the ACA snapshot and query API used by
+the browser. Running more than one path at a time duplicates rows;
+`CurrentFleet()` collapses them with `arg_max` per vehicle, so the map stays
+correct while storage grows.
 
 ## Data Contracts and Retention
 
