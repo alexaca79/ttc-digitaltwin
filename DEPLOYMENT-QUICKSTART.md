@@ -1,5 +1,8 @@
 ---
 title: TTC Digital Twin Deployment Quickstart
+description: Short path to deploy the supported Fabric, Rayfin, and Azure Container Apps workload
+ms.date: 2026-08-20
+ms.topic: quickstart
 ---
 
 The shortest path from a fresh clone to a running workload. Each step links to
@@ -83,14 +86,20 @@ See [Static Reference Data](DEPLOYMENT.md#static-reference-data).
 | --- | --- | --- |
 | Decoded publisher | Container App | Default |
 | Raw forward | Container App and notebook | `PUBLISHER_RAW_FEED_MODE` |
-| Fabric native | `TTCNativeIngest` notebook | Run or schedule it |
+| Fabric ingestion prototype | `TTCNativeIngest` notebook | Run it manually |
 
-All three write the same tables, so the application behaves identically. Running
-more than one duplicates rows; `CurrentFleet()` collapses them per vehicle, so
-the map stays correct while storage grows.
+All three target the same Eventhouse tables. They are not row-equivalent or
+complete application deployment alternatives. Running more than one duplicates
+rows; `CurrentFleet()` collapses them per vehicle, while duplicated history can
+still skew aggregate analytics.
 
-The Fabric-native path needs no container at all. The container paths are
-covered in [Fresh Deployment](DEPLOYMENT.md#fresh-deployment).
+`TTCNativeIngest` can remove the container from ingestion experiments, but it
+does not replace the publisher's HTTPS snapshot and query API. ACA remains part
+of the supported end-to-end deployment. See
+[Potential ACA-free architecture](DEPLOYMENT.md#potential-aca-free-architecture)
+for the proposed Fabric and Rayfin-only replacement and its operational
+constraints. The current container paths are covered in
+[Fresh Deployment](DEPLOYMENT.md#fresh-deployment).
 
 See [Ingestion Paths](DEPLOYMENT.md#ingestion-paths).
 
