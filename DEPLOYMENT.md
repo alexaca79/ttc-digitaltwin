@@ -27,72 +27,30 @@ Rayfin schema, application code, and publisher code.
 
 ## Platform Boundary
 
-Fabric contains the operational data plane after ingestion:
+Fabric contains the entire data plane. Nothing outside Fabric is required to
+ingest, store, or serve this workload.
 
-* Eventstream receives and routes normalized transit events.
+* `TTCNativeIngest` polls the TTC feeds, decodes protobuf, and enriches rows.
 * Eventhouse is the single serving store for vehicle, trip, and alert history.
-* KQL functions answer every operational question the application asks.
-* Rayfin hosts the authenticated application and operator-note database.
+* KQL functions answer every operational question the dashboard asks.
+* `TTCLiveOperations` serves operators directly from Eventhouse.
 
-One component remains outside Fabric. The TTC publisher must continuously poll
-an external HTTP feed every 15 seconds and expose the latest snapshot over
-HTTPS. The current supported deployment runs that component as one Azure
-Container App replica. Treat ACA as a temporary runtime boundary until a
-Fabric-native replacement completes the validation gates described below.
+The container publisher is retained for the optional Eventstream ingestion
+path only. It ships scaled to zero with ingress disabled and is not in the
+serving path.
 
 > [!IMPORTANT]
-> The current system is mostly self-contained in Fabric, not fully
-> self-contained. Keep ACA in place for production ingestion and live API
-> traffic. The potential replacement is an architecture option, not an
-> implemented or supported deployment path.
-
-### Potential ACA-free architecture
-
-See [Fabric-Native Publisher Alternative](FABRIC-NATIVE-ALTERNATIVE.md) for the
-full decision record, verified platform limitations, and removal gates.
-
-ACA currently owns three responsibilities:
-
-1. Poll the TTC GTFS-realtime feeds every 15 seconds.
-2. Decode and normalize Protobuf messages before writing telemetry to
-   Eventhouse.
-3. Serve live snapshots, fallback data, route analytics, health, readiness,
-   and throttling over HTTPS.
-
-A future Fabric and Rayfin-only design could replace those responsibilities
-with:
-
-* Long-running Fabric notebooks for TTC polling, Protobuf decoding, schedule
-  enrichment, and Eventhouse ingestion
-* OneLake files for live and fallback snapshot caches
-* An authenticated serving API for snapshots, route analytics, health, and
-  readiness; runtime selection and Fabric SSO validation remain open design
-  decisions
-
-The TTC endpoints do not currently expose JSON. Requests for `vehicles`,
-`trips`, and `alerts` return `application/x-google-protobuf` even when the
-caller requests JSON. The `?debug` variant returns Protobuf text notation, not
-JSON. Fabric Eventstream's HTTP source accepts JSON responses only, and
-Eventhouse has no Protobuf ingestion mapping. The replacement therefore still
-needs a Fabric-hosted decoding step; it cannot connect the TTC HTTP feed
-directly to Eventhouse.
-
-Fabric notebooks also have a seven-day maximum job runtime. Continuous
-operation would require overlapping pollers, leader election, fencing, and
-automatic recovery during notebook handoffs. This design can preserve product
-capabilities, but it cannot promise a gap-free 15-second cadence at every
-handoff. Overlapping pollers add unmeasured Fabric CU consumption while
-replacing the current 0.5-vCPU, 1-GiB ACA replica.
-
-Do not remove ACA until an implementation passes shadow comparison, forced
-failover, dependency-failure, and multi-day soak tests while preserving the
-existing browser and Eventhouse contracts.
+> Because polling, storage, and serving all sit on Fabric capacity, pausing
+> the capacity takes all three down together. The Kusto endpoint stops
+> resolving, ingestion stops, and the dashboard goes blank. This regression
+> was accepted deliberately; see
+> [Fabric-Native Publisher Alternative](FABRIC-NATIVE-ALTERNATIVE.md).
 
 Telemetry storage is deliberately single-tier.
 
 > [!NOTE]
 > There is one telemetry store. Every TTC event lands in `TTCOperations`, and
-> the application reads it through KQL. Eventhouse retention therefore bounds
+> the dashboard reads it through KQL. Eventhouse retention therefore bounds
 > history at 30 days for movement data and 90 days for alerts. Add a Lakehouse
 > destination only when you need history beyond those windows.
 
@@ -100,20 +58,20 @@ Telemetry storage is deliberately single-tier.
 
 ```mermaid
 flowchart LR
-  TTC["TTC GTFS-RT and static GTFS"]
-  Publisher["Azure Container App publisher"]
-  Eventstream["Fabric Eventstream"]
+  TTC["TTC GTFS-RT feeds"]
+  Static["City of Toronto GTFS archive"]
+  Gold["TTCSchedule gold lookup"]
+  Ingest["TTCNativeIngest notebook"]
   Eventhouse["Fabric Eventhouse and KQL"]
-  Rayfin["Rayfin Fabric App and managed SQL"]
-  Browser["TTC operator browser"]
+  Dash["TTCLiveOperations dashboard"]
+  Operator["TTC operator"]
 
-  TTC --> Publisher
-  Publisher -->|"Kafka, 800 KB batches"| Eventstream
-  Eventstream --> Eventhouse
-  Eventhouse -->|"CurrentFleet and ActiveAlerts"| Publisher
-  Publisher -->|"HTTPS live fleet"| Browser
-  Rayfin --> Browser
-  Browser --> Rayfin
+  Static -->|"daily"| Gold
+  TTC -->|"every 15 s"| Ingest
+  Gold -->|"schedule adherence"| Ingest
+  Ingest --> Eventhouse
+  Eventhouse -->|"CurrentFleet and ActiveAlerts"| Dash
+  Dash --> Operator
 ```
 
 ## Fabric Items
@@ -167,24 +125,27 @@ silver layer parses the components rather than casting to a timestamp.
 
 ## Ingestion Paths
 
-Three paths can populate `TTCOperations`. Only the first is enabled by default.
+Three paths can populate `TTCOperations`. The native path is the default.
 
 | Path | Component | Enabled by |
 | --- | --- | --- |
-| Decoded publisher | Container App and Eventstream | Default |
-| Raw forward | ACA and decoder notebook | `PUBLISHER_RAW_FEED_MODE` |
-| Native prototype | `TTCNativeIngest` notebook | Manual notebook run |
+| Native | `TTCNativeIngest` notebook | Default, Cron every 30 min |
+| Decoded publisher | Container App and Eventstream | Optional |
+| Raw forward | Container and decoder notebook | `PUBLISHER_RAW_FEED_MODE` |
 
-The decoded path normalizes events in the container and lets the Eventstream SQL
-operator route them. The raw path forwards undecoded protobuf, gzip and base64
-encoded, and decodes it in a Spark notebook destination. The native path removes
-the container from ingestion entirely by fetching and decoding inside Fabric.
+The native path fetches and decodes inside Fabric, so no component outside
+Fabric participates. The decoded path normalizes events in the container and
+lets the Eventstream SQL operator route them. The raw path forwards undecoded
+protobuf, gzip and base64 encoded, and decodes it in a Spark notebook.
 
-These are ingestion choices only. All three write the same Eventhouse tables,
-but `TTCNativeIngest` does not replace the ACA snapshot and query API used by
-the browser. Running more than one path at a time duplicates rows;
-`CurrentFleet()` collapses them with `arg_max` per vehicle, so the map stays
-correct while storage grows.
+All three write the same Eventhouse tables. Running more than one at a time
+duplicates rows; `CurrentFleet()` collapses them with `arg_max` per vehicle,
+so results stay correct while storage grows.
+
+The native path runs on a schedule rather than continuously. Each session
+polls for twenty eight minutes and a new session starts every thirty, which
+leaves a short gap between sessions. `CurrentFleet()` looks back thirty five
+minutes so the dashboard stays populated across it.
 
 ## Data Contracts and Retention
 
@@ -217,10 +178,28 @@ Reusable functions are defined in `DatabaseSchema.kql`:
 * `RoutePerformance()` summarizes schedule adherence by route and mode.
 * `ActiveAlerts()` returns alerts whose active window has not ended.
 
-### Application query path
+### Serving path
 
-The publisher exposes the Eventhouse to the browser through two read-only
-endpoints backed entirely by the KQL functions above:
+`TTCLiveOperations` reads Eventhouse directly through the KQL functions above.
+It refreshes every minute and is governed by Fabric identity, so there is no
+separate sign-in and no publicly reachable endpoint.
+
+| Tile group | Query |
+| --- | --- |
+| Fleet, on-time, delayed, feed age | `CurrentFleet` |
+| Live fleet map and mode split | `CurrentFleet` |
+| Route and deviation breakdowns | `CurrentFleet` |
+| Active service alerts | `ActiveAlerts` |
+
+The dashboard definition lives in `fabric/dashboard/` and is provisioned by
+`scripts/deployFabric.ts`, so portal edits are overwritten on the next deploy.
+Change the definition in the repository, not in the portal.
+
+#### Optional container query path
+
+The container publisher also exposes read-only endpoints. They are not used by
+the default deployment and the container ships scaled to zero with ingress
+disabled.
 
 | Endpoint | Query | Purpose |
 | --- | --- | --- |
@@ -228,13 +207,10 @@ endpoints backed entirely by the KQL functions above:
 | `/api/route-performance` | `RoutePerformance` | Route adherence summaries |
 | `/api/snapshot` | None | Fall back to in-memory poller state |
 
-The browser calls `/api/live` first and falls back to `/api/snapshot` when the
-Eventhouse is unreachable, so a query outage degrades freshness rather than
-removing the map. The `lookback` parameter is restricted to an allow list, so
-caller input never reaches the KQL text.
-
-Queries authenticate with the publisher's managed identity. Grant that identity
-viewer access on `TTCOperations` before enabling `/api/live`.
+The `lookback` parameter is restricted to an allow list, so caller input never
+reaches the KQL text. Queries authenticate with the container managed
+identity. Grant that identity viewer access on `TTCOperations` before enabling
+`/api/live`.
 
 ### Rayfin
 
