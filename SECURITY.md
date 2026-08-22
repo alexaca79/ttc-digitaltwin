@@ -18,7 +18,12 @@ the latest guidance for Microsoft repositories at
 This project reads public City of Toronto open data. It stores no personal
 data, no fare data, and no employee data.
 
-The TTC publisher exposes read-only HTTP endpoints. Before running it on a
+The default deployment exposes no public endpoint. Operators reach the data
+through the `TTCLiveOperations` Real-Time Dashboard, which reads Eventhouse
+directly and is governed by Fabric identity.
+
+The container publisher is retained for the optional Eventstream ingestion
+path. It ships scaled to zero with ingress disabled. Before enabling it on a
 public address, understand these boundaries:
 
 * The endpoints are unauthenticated. `PUBLISHER_ALLOWED_ORIGIN` restricts

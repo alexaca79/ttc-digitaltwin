@@ -16,6 +16,7 @@ procedures.
 | Lakehouse | `TTCSchedule` | Static GTFS in bronze, silver, gold |
 | Eventhouse | `TTCOperations` | Live vehicles, trips, and alerts |
 | Eventstream | `TTCTelemetry` | Custom Endpoint and SQL router |
+| Dashboard | `TTCLiveOperations` | The operator surface |
 | Rayfin | AppBackend and SQL | The app, SSO, and operator notes |
 
 Static reference data changes daily and lives in the Lakehouse. Live telemetry
@@ -84,24 +85,20 @@ See [Static Reference Data](DEPLOYMENT.md#static-reference-data).
 
 | Path | Runs where | Enable with |
 | --- | --- | --- |
-| Decoded publisher | Container App | Default |
+| Native | `TTCNativeIngest` notebook | Default, schedule it |
+| Decoded publisher | Container App | Optional |
 | Raw forward | Container App and notebook | `PUBLISHER_RAW_FEED_MODE` |
-| Fabric ingestion prototype | `TTCNativeIngest` notebook | Run it manually |
 
-All three target the same Eventhouse tables. They are not row-equivalent or
-complete application deployment alternatives. Running more than one duplicates
+The native path keeps everything inside Fabric and is what the dashboard
+expects. Schedule `TTCNativeIngest` to run every thirty minutes.
+
+All three target the same Eventhouse tables. Running more than one duplicates
 rows; `CurrentFleet()` collapses them per vehicle, while duplicated history can
 still skew aggregate analytics.
 
-`TTCNativeIngest` can remove the container from ingestion experiments, but it
-does not replace the publisher's HTTPS snapshot and query API. ACA remains part
-of the supported end-to-end deployment. See
-[Potential ACA-free architecture](DEPLOYMENT.md#potential-aca-free-architecture)
-for the proposed Fabric and Rayfin-only replacement and its operational
-constraints. The current container paths are covered in
-[Fresh Deployment](DEPLOYMENT.md#fresh-deployment).
-
-See [Ingestion Paths](DEPLOYMENT.md#ingestion-paths).
+See [Ingestion Paths](DEPLOYMENT.md#ingestion-paths). For why the container was
+removed from the serving path and which validation gates were waived, read
+[Fabric-Native Publisher Alternative](FABRIC-NATIVE-ALTERNATIVE.md).
 
 ## 5. Open the dashboard
 
