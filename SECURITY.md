@@ -18,13 +18,15 @@ the latest guidance for Microsoft repositories at
 This project reads public City of Toronto open data. It stores no personal
 data, no fare data, and no employee data.
 
-The default deployment exposes no public endpoint. Operators reach the data
-through the `TTCLiveOperations` Real-Time Dashboard, which reads Eventhouse
-directly and is governed by Fabric identity.
+This repository supports two serving paths and they have different exposure.
 
-The container publisher is retained for the optional Eventstream ingestion
-path. It ships scaled to zero with ingress disabled. Before enabling it on a
-public address, understand these boundaries:
+The `TTCLiveOperations` Real-Time Dashboard reads Eventhouse directly and is
+governed by Fabric identity. It exposes no public endpoint.
+
+The React app is served from Fabric and requires sign-in, but it reads live
+telemetry from the container publisher over a public HTTPS endpoint. That
+endpoint is currently enabled. Understand these boundaries before relying on
+it:
 
 * The endpoints are unauthenticated. `PUBLISHER_ALLOWED_ORIGIN` restricts
   browser origins through CORS, which is not an authorization control.

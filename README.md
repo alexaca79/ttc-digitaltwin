@@ -177,9 +177,11 @@ src/                     React workspace for the optional app path
 
 ## Security
 
-Everything runs inside Fabric and is governed by Fabric identity. There is no
-public endpoint in the default configuration.
+The dashboard path runs entirely inside Fabric and is governed by Fabric
+identity, with no public endpoint.
 
-The optional container publisher is retained for the Eventstream path. It is
-scaled to zero with ingress disabled. Read [SECURITY.md](SECURITY.md) before
-enabling it.
+The container publisher backs the optional React app. It runs as a query proxy
+over Eventhouse and exposes a public unauthenticated HTTPS endpoint. It no
+longer publishes to Eventstream, because `TTCNativeIngest` owns ingestion and
+running both paths duplicates rows. Read [SECURITY.md](SECURITY.md) before
+relying on it.

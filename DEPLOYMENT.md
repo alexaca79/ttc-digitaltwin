@@ -36,8 +36,9 @@ ingest, store, or serve this workload.
 * `TTCLiveOperations` serves operators directly from Eventhouse.
 
 The container publisher is retained for the optional Eventstream ingestion
-path only. It ships scaled to zero with ingress disabled and is not in the
-serving path.
+path and the optional React app. It runs as a query proxy over Eventhouse and
+exposes a public unauthenticated endpoint. Its Eventstream publishing is
+disabled so it cannot duplicate rows against `TTCNativeIngest`.
 
 > [!IMPORTANT]
 > Because polling, storage, and serving all sit on Fabric capacity, pausing
@@ -201,8 +202,8 @@ Change the definition in the repository, not in the portal.
 #### Optional container query path
 
 The container publisher also exposes read-only endpoints. They are not used by
-the default deployment and the container ships scaled to zero with ingress
-disabled.
+the dashboard. They back the optional React app and are publicly reachable
+without authentication.
 
 | Endpoint | Query | Purpose |
 | --- | --- | --- |

@@ -22,8 +22,9 @@ Spark, joins the medallion Lakehouse gold table for schedule adherence, and
 appends to Eventhouse. `TTCLiveOperations`, a Real-Time Dashboard, reads
 Eventhouse directly.
 
-The container publisher still exists for the optional Eventstream path. It is
-scaled to zero with ingress disabled and is not in the serving path.
+The container publisher still exists, but only as a query proxy for the
+optional React app. Its Eventstream publishing is disabled, so it no longer
+participates in ingestion.
 
 ## Assumptions that held
 
