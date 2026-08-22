@@ -24,6 +24,11 @@ For operations, rollback, and recovery, read [DEPLOYMENT.md](DEPLOYMENT.md).
 > real-time vehicle data is not published. Subway routes and stops appear from
 > static GTFS, and the workload never fabricates live subway positions.
 
+Line 5 Eglinton and Line 6 Finch West appear on their own map tile, drawn from
+static GTFS. Those stations are infrastructure context, not live positions.
+The realtime feed publishes no vehicles for either line, which the tile title
+states so nobody reads an empty line as a service outage.
+
 ## Data Architecture
 
 Storage is split by how the data behaves. The timetable is republished daily and
@@ -119,6 +124,7 @@ tier sits between the operator and the data.
 | Schedule deviation spread | Is lateness broad or concentrated |
 | Fleet by mode | Bus and streetcar split |
 | Vehicles reporting over time | Is coverage stable |
+| Rapid transit stations | Where Line 5 and Line 6 infrastructure sits |
 
 Open it from the Fabric portal. Fabric identity governs access, so there is no
 separate sign-in and no publicly reachable endpoint.

@@ -383,6 +383,26 @@ def write_to_eventhouse(frame, table):
         .save()
     )
 
+
+def publish_stations():
+    """Refresh static station geometry so the map has infrastructure context.
+
+    These routes publish no realtime vehicles, so this is never a live
+    position. Absence of the gold table is tolerated.
+    """
+    if not lakehouse_abfss:
+        return None
+    try:
+        frame = spark.read.format("delta").load(
+            f"{lakehouse_abfss}/Tables/gold_rapid_transit_stations"
+        )
+    except Exception:  # noqa: BLE001 - the medallion may not have run yet
+        return None
+
+    stamped = frame.withColumn("LoadedAt", F.current_timestamp())
+    write_to_eventhouse(stamped, "RapidTransitStations")
+    return stamped.count()
+
 # METADATA ********************
 
 # META {
@@ -428,6 +448,9 @@ try:
     if schedule is not None:
         schedule = schedule.select("TripId", "StopSequence", "ScheduledSeconds").cache()
         summary["scheduleRows"] = schedule.count()
+
+    summary["stage"] = "stations"
+    summary["stations"] = publish_stations()
 
     deadline = time.monotonic() + float(run_duration_seconds)
     totals = {"vehicles": 0, "trips": 0, "alerts": 0, "enriched": 0}

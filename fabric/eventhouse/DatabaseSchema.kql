@@ -45,12 +45,23 @@
     ActiveEndEpochSeconds:long,
     Source:string
 )
+.create-merge table RapidTransitStations (
+    RouteId: string,
+    RouteName: string,
+    StationName: string,
+    Latitude: real,
+    Longitude: real,
+    LoadedAt: datetime
+)
+
 .alter table VehiclePositions policy retention '{"SoftDeletePeriod":"30.00:00:00","Recoverability":"Enabled"}'
 .alter table TripUpdates policy retention '{"SoftDeletePeriod":"30.00:00:00","Recoverability":"Enabled"}'
 .alter table ServiceAlerts policy retention '{"SoftDeletePeriod":"90.00:00:00","Recoverability":"Enabled"}'
 .alter table VehiclePositions policy caching hot = 7d
 .alter table TripUpdates policy caching hot = 7d
 .alter table ServiceAlerts policy caching hot = 30d
+.alter table RapidTransitStations policy retention '{"SoftDeletePeriod":"3650.00:00:00","Recoverability":"Enabled"}'
+.alter table RapidTransitStations policy caching hot = 365d
 .alter table VehiclePositions policy streamingingestion enable
 .alter table TripUpdates policy streamingingestion enable
 .alter table ServiceAlerts policy streamingingestion enable
@@ -85,4 +96,12 @@
     ServiceAlerts
     | summarize arg_max(ObservedAt, *) by AlertId
     | where ActiveEndEpochSeconds == 0 or unixtime_seconds_todatetime(ActiveEndEpochSeconds) > now()
+}
+
+// Static infrastructure from GTFS. The realtime feed publishes no vehicles for
+// these routes, so this is never a live position.
+.create-or-alter function with (folder='TTC Digital Twin', docstring='Rapid transit stations from the latest static GTFS load') RapidTransitStations() {
+    RapidTransitStations
+    | summarize arg_max(LoadedAt, *) by RouteId, StationName
+    | project RouteId, RouteName, StationName, Latitude, Longitude
 }

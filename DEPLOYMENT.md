@@ -171,12 +171,14 @@ cannot keep pace with the trip-update volume; observation lag grows until
 | `VehiclePositions` | 30 days | 7 days |
 | `TripUpdates` | 30 days | 7 days |
 | `ServiceAlerts` | 90 days | 30 days |
+| `RapidTransitStations` | 10 years | 365 days |
 
 Reusable functions are defined in `DatabaseSchema.kql`:
 
 * `CurrentFleet()` returns the newest observation per active vehicle.
 * `RoutePerformance()` summarizes schedule adherence by route and mode.
 * `ActiveAlerts()` returns alerts whose active window has not ended.
+* `RapidTransitStations()` returns Line 5 and Line 6 stations from GTFS.
 
 ### Serving path
 
@@ -190,6 +192,7 @@ separate sign-in and no publicly reachable endpoint.
 | Live fleet map and mode split | `CurrentFleet` |
 | Route and deviation breakdowns | `CurrentFleet` |
 | Active service alerts | `ActiveAlerts` |
+| Rapid transit stations | `RapidTransitStations` |
 
 The dashboard definition lives in `fabric/dashboard/` and is provisioned by
 `scripts/deployFabric.ts`, so portal edits are overwritten on the next deploy.
