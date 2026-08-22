@@ -42,7 +42,12 @@ from datetime import datetime, timezone
 import requests
 from pyspark.sql.functions import lit
 
-BRONZE_MEMBERS = {"stop_times": "stop_times.txt", "trips": "trips.txt"}
+BRONZE_MEMBERS = {
+    "stop_times": "stop_times.txt",
+    "trips": "trips.txt",
+    "routes": "routes.txt",
+    "stops": "stops.txt",
+}
 
 summary = {"ok": False, "stage": "start", "layer": "bronze"}
 

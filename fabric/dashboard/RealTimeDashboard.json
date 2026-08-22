@@ -2,7 +2,11 @@
   "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1001",
   "schema_version": "52",
   "title": "TTC Live Operations",
-  "autoRefresh": { "enabled": true, "defaultInterval": "1m", "minimumInterval": "30s" },
+  "autoRefresh": {
+    "enabled": true,
+    "defaultInterval": "1m",
+    "minimumInterval": "30s"
+  },
   "baseQueries": [],
   "parameters": [
     {
@@ -12,8 +16,14 @@
       "description": "",
       "beginVariableName": "_startTime",
       "endVariableName": "_endTime",
-      "defaultValue": { "kind": "dynamic", "count": 6, "unit": "hours" },
-      "showOnPages": { "kind": "all" }
+      "defaultValue": {
+        "kind": "dynamic",
+        "count": 6,
+        "unit": "hours"
+      },
+      "showOnPages": {
+        "kind": "all"
+      }
     }
   ],
   "dataSources": [
@@ -26,31 +36,339 @@
       "database": "TTCOperations"
     }
   ],
-  "pages": [ { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "name": "Live operations" } ],
+  "pages": [
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "name": "Live operations"
+    }
+  ],
   "queries": [
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2001", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "CurrentFleet() | summarize Vehicles = count()", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2002", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "CurrentFleet() | where isnotnull(ScheduleDeviationSeconds) | summarize OnTimePercent = round(100.0 * countif(ScheduleDeviationSeconds >= -120 and ScheduleDeviationSeconds <= 180) / count(), 1)", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2003", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "CurrentFleet() | summarize Delayed = countif(ScheduleDeviationSeconds > 180)", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2004", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "ActiveAlerts() | summarize Alerts = count()", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2011", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "VehiclePositions | summarize LastObservation = max(ObservedAt) | extend FeedAgeMinutes = round(datetime_diff('second', now(), LastObservation) / 60.0, 1) | project FeedAgeMinutes", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2005", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "CurrentFleet() | project VehicleLabel, RouteId, Mode, State, ScheduleDeviationSeconds, Latitude, Longitude", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2006", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "ActiveAlerts() | project ObservedAt, Severity, Title, Description | order by ObservedAt desc", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2007", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "RoutePerformance(30m) | where isnotnull(OnTimePercent) | project RouteId, Mode, Vehicles, OnTimePercent, Delayed, P95DelaySeconds | order by Delayed desc | take 20", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2008", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "CurrentFleet() | where isnotnull(ScheduleDeviationSeconds) | summarize Vehicles = count() by DelayMinutes = bin(ScheduleDeviationSeconds / 60, 2) | order by DelayMinutes asc", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2010", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "CurrentFleet() | summarize Vehicles = count() by Mode", "usedVariables": [] },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2009", "dataSource": { "kind": "manual", "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003" }, "text": "VehiclePositions | where ObservedAt between (_startTime .. _endTime) | summarize Vehicles = dcount(VehicleId) by bin(ObservedAt, 10m) | order by ObservedAt asc", "usedVariables": ["_startTime", "_endTime"] }
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2001",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "CurrentFleet() | summarize Vehicles = count()",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2002",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "CurrentFleet() | where isnotnull(ScheduleDeviationSeconds) | summarize OnTimePercent = round(100.0 * countif(ScheduleDeviationSeconds >= -120 and ScheduleDeviationSeconds <= 180) / count(), 1)",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2003",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "CurrentFleet() | summarize Delayed = countif(ScheduleDeviationSeconds > 180)",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2004",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "ActiveAlerts() | summarize Alerts = count()",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2011",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "VehiclePositions | summarize LastObservation = max(ObservedAt) | extend FeedAgeMinutes = round(datetime_diff('second', now(), LastObservation) / 60.0, 1) | project FeedAgeMinutes",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2005",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "CurrentFleet() | project VehicleLabel, RouteId, Mode, State, ScheduleDeviationSeconds, Latitude, Longitude",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2006",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "ActiveAlerts() | project ObservedAt, Severity, Title, Description | order by ObservedAt desc",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2007",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "RoutePerformance(30m) | where isnotnull(OnTimePercent) | project RouteId, Mode, Vehicles, OnTimePercent, Delayed, P95DelaySeconds | order by Delayed desc | take 20",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2008",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "CurrentFleet() | where isnotnull(ScheduleDeviationSeconds) | summarize Vehicles = count() by DelayMinutes = bin(ScheduleDeviationSeconds / 60, 2) | order by DelayMinutes asc",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2010",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "CurrentFleet() | summarize Vehicles = count() by Mode",
+      "usedVariables": []
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2009",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "VehiclePositions | where ObservedAt between (_startTime .. _endTime) | summarize Vehicles = dcount(VehicleId) by bin(ObservedAt, 10m) | order by ObservedAt asc",
+      "usedVariables": [
+        "_startTime",
+        "_endTime"
+      ]
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2012",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
+      },
+      "text": "RapidTransitStations() | project StationName, RouteName, RouteId, Latitude, Longitude",
+      "usedVariables": []
+    }
   ],
   "tiles": [
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3001", "title": "Vehicles in service", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 0, "y": 0, "width": 5, "height": 3 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2001" }, "visualType": "card", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3002", "title": "On time percent", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 5, "y": 0, "width": 5, "height": 3 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2002" }, "visualType": "card", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3003", "title": "Delayed vehicles", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 10, "y": 0, "width": 5, "height": 3 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2003" }, "visualType": "card", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3004", "title": "Active alerts", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 15, "y": 0, "width": 4, "height": 3 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2004" }, "visualType": "card", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3005", "title": "Feed age minutes", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 19, "y": 0, "width": 5, "height": 3 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2011" }, "visualType": "card", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3006", "title": "Live fleet", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 0, "y": 3, "width": 14, "height": 11 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2005" }, "visualType": "map", "visualOptions": { "map__type": "point", "map__latitudeColumn": "Latitude", "map__longitudeColumn": "Longitude", "map__labelColumn": "VehicleLabel" } },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3007", "title": "Active service alerts", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 14, "y": 3, "width": 10, "height": 11 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2006" }, "visualType": "table", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3008", "title": "Routes with most delayed vehicles", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 0, "y": 14, "width": 12, "height": 8 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2007" }, "visualType": "table", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3009", "title": "Schedule deviation spread", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 12, "y": 14, "width": 7, "height": 8 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2008" }, "visualType": "column", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3010", "title": "Fleet by mode", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 19, "y": 14, "width": 5, "height": 8 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2010" }, "visualType": "piechart", "visualOptions": {} },
-    { "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3011", "title": "Vehicles reporting over time", "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004", "layout": { "x": 0, "y": 22, "width": 24, "height": 7 }, "queryRef": { "kind": "query", "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2009" }, "visualType": "timechart", "visualOptions": {} }
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3001",
+      "title": "Vehicles in service",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 5,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2001"
+      },
+      "visualType": "card",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3002",
+      "title": "On time percent",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 5,
+        "y": 0,
+        "width": 5,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2002"
+      },
+      "visualType": "card",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3003",
+      "title": "Delayed vehicles",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 10,
+        "y": 0,
+        "width": 5,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2003"
+      },
+      "visualType": "card",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3004",
+      "title": "Active alerts",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 15,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2004"
+      },
+      "visualType": "card",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3005",
+      "title": "Feed age minutes",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 19,
+        "y": 0,
+        "width": 5,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2011"
+      },
+      "visualType": "card",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3006",
+      "title": "Live fleet",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 0,
+        "y": 3,
+        "width": 14,
+        "height": 11
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2005"
+      },
+      "visualType": "map",
+      "visualOptions": {
+        "map__type": "point",
+        "map__latitudeColumn": "Latitude",
+        "map__longitudeColumn": "Longitude",
+        "map__labelColumn": "VehicleLabel"
+      }
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3007",
+      "title": "Active service alerts",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 14,
+        "y": 3,
+        "width": 10,
+        "height": 11
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2006"
+      },
+      "visualType": "table",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3008",
+      "title": "Routes with most delayed vehicles",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 0,
+        "y": 14,
+        "width": 12,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2007"
+      },
+      "visualType": "table",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3009",
+      "title": "Schedule deviation spread",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 12,
+        "y": 14,
+        "width": 7,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2008"
+      },
+      "visualType": "column",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3010",
+      "title": "Fleet by mode",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 19,
+        "y": 14,
+        "width": 5,
+        "height": 8
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2010"
+      },
+      "visualType": "piechart",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3011",
+      "title": "Vehicles reporting over time",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 0,
+        "y": 22,
+        "width": 24,
+        "height": 7
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2009"
+      },
+      "visualType": "timechart",
+      "visualOptions": {}
+    },
+    {
+      "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3012",
+      "title": "Rapid transit stations (scheduled, no live vehicles)",
+      "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
+      "layout": {
+        "x": 0,
+        "y": 29,
+        "width": 24,
+        "height": 10
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e2012"
+      },
+      "visualType": "map",
+      "visualOptions": {
+        "map__type": "point",
+        "map__latitudeColumn": "Latitude",
+        "map__longitudeColumn": "Longitude",
+        "map__labelColumn": "StationName"
+      }
+    }
   ]
 }
