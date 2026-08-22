@@ -130,6 +130,7 @@ The deployment script creates or reuses the following names.
 | `TTCScheduleSilver` | `fabric/notebook-silver/` |
 | `TTCScheduleGold` | `fabric/notebook-gold/` |
 | `TTCNativeIngest` | `fabric/notebook-ingest/` |
+| `TTCLiveOperations` | `fabric/dashboard/` |
 | `TTCFeedDecoder` | `fabric/notebook/` |
 | Rayfin AppBackend | `rayfin/rayfin.yml` |
 | Rayfin managed SQL | `rayfin/data/` |

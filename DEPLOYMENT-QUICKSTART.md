@@ -103,7 +103,20 @@ constraints. The current container paths are covered in
 
 See [Ingestion Paths](DEPLOYMENT.md#ingestion-paths).
 
-## 5. Connect the query endpoint
+## 5. Open the dashboard
+
+`TTCLiveOperations` is a Real-Time Dashboard that reads Eventhouse directly. It
+refreshes every minute, and Fabric identity governs access, so nothing is
+publicly reachable and no web tier is required.
+
+Open it from the workspace. Tiles stay empty until `TTCNativeIngest` has run at
+least once, and `Feed age minutes` tells you whether what you are seeing is
+current.
+
+This is the default operator surface. Steps 6 and 7 apply only if you also want
+the optional container publisher and React app.
+
+## 6. Optional: connect the container query endpoint
 
 The application reads Eventhouse through the publisher. Grant the publisher
 identity viewer access on `TTCOperations`, then set `FABRIC_KQL_QUERY_URI` and
@@ -113,7 +126,7 @@ Until this is done, `/api/live` returns HTTP 503 and the browser falls back to
 `/api/snapshot`. The map still works; it is served from poller memory rather
 than Eventhouse.
 
-## 6. Deploy the app
+## 7. Optional: deploy the app
 
 ```powershell
 npx rayfin login
@@ -127,7 +140,7 @@ the publisher ingress before building.
 Open the app from the Fabric portal so embedded SSO can complete. It will not
 finish authenticating in a plain browser tab.
 
-## 7. Validate
+## 8. Validate
 
 | Check | Expected |
 | --- | --- |
