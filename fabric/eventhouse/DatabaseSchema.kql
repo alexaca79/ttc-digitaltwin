@@ -56,7 +56,7 @@
 .alter table ServiceAlerts policy streamingingestion enable
 .create-or-alter function with (folder='TTC Digital Twin', docstring='Latest observation for every active TTC vehicle') CurrentFleet() {
     VehiclePositions
-    | where ObservedAt > ago(10m)
+    | where ObservedAt > ago(35m)
     | summarize arg_max(ObservedAt, *) by VehicleId
 }
 .create-or-alter function with (folder='TTC Digital Twin', docstring='Route schedule adherence over the selected time window') RoutePerformance(Lookback:timespan = 30m) {

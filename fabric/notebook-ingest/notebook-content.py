@@ -47,7 +47,7 @@ kql_database = "TTCOperations"
 lakehouse_abfss = "{{LAKEHOUSE_ABFSS}}"
 feed_base_url = "https://bustime.ttc.ca/gtfsrt"
 poll_seconds = 15
-run_duration_seconds = 60
+run_duration_seconds = 1680
 
 # METADATA ********************
 

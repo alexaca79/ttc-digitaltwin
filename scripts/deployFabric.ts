@@ -117,6 +117,14 @@ function medallionNotebookDefinition(folder: string, variables: Record<string, s
   };
 }
 
+function dashboardDefinition(variables: Record<string, string>) {
+  return {
+    parts: [
+      jsonPart('dashboard/RealTimeDashboard.json', variables, 'RealTimeDashboard.json'),
+      textPart('dashboard/.platform', '.platform'),
+    ],
+  };
+}
 function eventstreamDefinition(variables: Record<string, string>) {
   return {
     format: 'eventstream',
@@ -220,6 +228,10 @@ async function main() {
           LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
         })
       ),
+      dashboard: dashboardDefinition({
+        KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
+        KQL_DATABASE: 'TTCOperations',
+      }),
       eventstream: eventstreamDefinition(variables),
     };
     console.log(
@@ -348,6 +360,31 @@ async function main() {
     medallionNotebookIds[entry.name] = item.id;
   }
 
+  const dashboardVariables = {
+    KQL_CLUSTER_URI: queryServiceUri,
+    KQL_DATABASE: 'TTCOperations',
+  };
+  const { item: dashboard, created: dashboardCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'kqlDashboards',
+    'TTCLiveOperations',
+    {
+      displayName: 'TTCLiveOperations',
+      description: 'Real-time TTC operations dashboard served from TTCOperations.',
+      definition: dashboardDefinition(dashboardVariables),
+    }
+  );
+  if (!dashboardCreated) {
+    await updateFabricDefinition(
+      token,
+      workspaceId,
+      'kqlDashboards',
+      dashboard.id,
+      dashboardDefinition(dashboardVariables)
+    );
+  }
+
   const variables = {
     WORKSPACE_ID: workspaceId,
     KQL_DATABASE_ID: kqlDatabase.id,
@@ -400,6 +437,7 @@ async function main() {
     medallionNotebookIds,
     lakehouseId: lakehouse.id,
     lakehouseAbfss,
+    dashboardId: dashboard.id,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');
