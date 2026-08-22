@@ -46,6 +46,7 @@
     Source:string
 )
 .create-merge table RapidTransitStations (
+    Agency: string,
     RouteId: string,
     RouteName: string,
     StationName: string,
@@ -100,8 +101,8 @@
 
 // Static infrastructure from GTFS. The realtime feed publishes no vehicles for
 // these routes, so this is never a live position.
-.create-or-alter function with (folder='TTC Digital Twin', docstring='Rapid transit stations from the latest static GTFS load') RapidTransitStations() {
-    RapidTransitStations
-    | summarize arg_max(LoadedAt, *) by RouteId, StationName
-    | project RouteId, RouteName, StationName, Latitude, Longitude
+.create-or-alter function with (folder='TTC Digital Twin', docstring='TTC and GO Transit rapid transit stations from the latest static GTFS load') RapidTransitStations() {
+    table("RapidTransitStations")
+    | summarize arg_max(LoadedAt, *) by Agency, RouteId, StationName
+    | project Agency, RouteId, RouteName, StationName, Latitude, Longitude
 }

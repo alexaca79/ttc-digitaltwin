@@ -21,6 +21,7 @@
 
 lakehouse_abfss = "{{LAKEHOUSE_ABFSS}}"
 gtfs_zip_url = "https://ckan0.cf.opendata.inter.prod-toronto.ca/dataset/b811ead4-6eaf-4adb-8408-d389fb5a069c/resource/c920e221-7a1c-488b-8c5b-6d8cd4e85eaf/download/Complete%20GTFS.zip"
+go_gtfs_zip_url = "https://assets.metrolinx.com/raw/upload/Documents/Metrolinx/Open%20Data/GO-GTFS.zip"
 chain_downstream = True
 
 # METADATA ********************
@@ -42,12 +43,19 @@ from datetime import datetime, timezone
 import requests
 from pyspark.sql.functions import lit
 
-BRONZE_MEMBERS = {
+MEMBERS = {
     "stop_times": "stop_times.txt",
     "trips": "trips.txt",
     "routes": "routes.txt",
     "stops": "stops.txt",
 }
+
+# Two agencies, landed side by side. TTC keeps the unprefixed table names so
+# the existing silver and gold contracts are unchanged.
+SOURCES = [
+    {"prefix": "", "url": gtfs_zip_url},
+    {"prefix": "go_", "url": go_gtfs_zip_url},
+]
 
 summary = {"ok": False, "stage": "start", "layer": "bronze"}
 
@@ -55,39 +63,44 @@ try:
     if not lakehouse_abfss:
         raise ValueError("lakehouse_abfss parameter is required.")
 
-    summary["stage"] = "download"
-    work_dir = tempfile.mkdtemp()
-    archive_path = os.path.join(work_dir, "gtfs.zip")
-    with requests.get(gtfs_zip_url, stream=True, timeout=1800) as response:
-        response.raise_for_status()
-        with open(archive_path, "wb") as handle:
-            for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
-                handle.write(chunk)
-    summary["archiveBytes"] = os.path.getsize(archive_path)
-
     ingested_at = datetime.now(tz=timezone.utc).isoformat()
     counts = {}
 
-    with zipfile.ZipFile(archive_path) as archive:
-        names = archive.namelist()
-        for table, filename in BRONZE_MEMBERS.items():
-            summary["stage"] = f"extract:{table}"
-            member = next(n for n in names if n.endswith(filename))
-            extracted = archive.extract(member, work_dir)
+    for source in SOURCES:
+        prefix = source["prefix"]
+        url = source["url"]
+        label = prefix or "ttc_"
 
-            staged = f"{lakehouse_abfss}/Files/gtfs/{filename}"
-            notebookutils.fs.cp(f"file://{extracted}", staged, True)
+        summary["stage"] = f"download:{label}"
+        work_dir = tempfile.mkdtemp()
+        archive_path = os.path.join(work_dir, "gtfs.zip")
+        with requests.get(url, stream=True, timeout=1800) as response:
+            response.raise_for_status()
+            with open(archive_path, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
+                    handle.write(chunk)
+        summary[f"archiveBytes:{label}"] = os.path.getsize(archive_path)
 
-            summary["stage"] = f"land:{table}"
-            # Bronze keeps every column as published; only provenance is added.
-            frame = (
-                spark.read.csv(staged, header=True)
-                .withColumn("IngestedAt", lit(ingested_at))
-                .withColumn("SourceUrl", lit(gtfs_zip_url))
-            )
-            target = f"{lakehouse_abfss}/Tables/bronze_{table}"
-            frame.write.mode("overwrite").option("overwriteSchema", "true").format("delta").save(target)
-            counts[table] = spark.read.format("delta").load(target).count()
+        with zipfile.ZipFile(archive_path) as archive:
+            names = archive.namelist()
+            for table, filename in MEMBERS.items():
+                summary["stage"] = f"extract:{prefix}{table}"
+                member = next(n for n in names if n.endswith(filename))
+                extracted = archive.extract(member, work_dir)
+
+                staged = f"{lakehouse_abfss}/Files/gtfs/{prefix}{filename}"
+                notebookutils.fs.cp(f"file://{extracted}", staged, True)
+
+                summary["stage"] = f"land:{prefix}{table}"
+                # Bronze keeps every column as published; only provenance is added.
+                frame = (
+                    spark.read.csv(staged, header=True)
+                    .withColumn("IngestedAt", lit(ingested_at))
+                    .withColumn("SourceUrl", lit(url))
+                )
+                target = f"{lakehouse_abfss}/Tables/bronze_{prefix}{table}"
+                frame.write.mode("overwrite").option("overwriteSchema", "true").format("delta").save(target)
+                counts[f"{prefix}{table}"] = spark.read.format("delta").load(target).count()
 
     summary["rows"] = counts
     summary.update({"ok": True, "stage": "done"})

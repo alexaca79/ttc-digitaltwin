@@ -24,10 +24,14 @@ For operations, rollback, and recovery, read [DEPLOYMENT.md](DEPLOYMENT.md).
 > real-time vehicle data is not published. Subway routes and stops appear from
 > static GTFS, and the workload never fabricates live subway positions.
 
-Line 5 Eglinton and Line 6 Finch West appear on their own map tile, drawn from
-static GTFS. Those stations are infrastructure context, not live positions.
-The realtime feed publishes no vehicles for either line, which the tile title
-states so nobody reads an empty line as a service outage.
+The rapid transit tile shows TTC Line 5 Eglinton and Line 6 Finch West plus all
+seven GO Transit rail corridors, drawn from static GTFS. These are
+infrastructure context, not live positions.
+
+No live vehicles exist for any of them. TTC does not publish realtime data for
+LRT, and Metrolinx puts its GTFS-realtime feeds behind a registered access key
+that this repository does not carry. The tile title says so, because an empty
+line otherwise reads as a service outage.
 
 ## Data Architecture
 
@@ -147,6 +151,7 @@ across the gap between scheduled sessions.
 | --- | --- |
 | TTC GTFS-realtime | City of Toronto Open Data |
 | Merged GTFS routes and schedules | City of Toronto Open Data |
+| GO Transit static GTFS | Metrolinx Open Data |
 
 Attribution and dataset links are listed in [DEPLOYMENT.md](DEPLOYMENT.md).
 

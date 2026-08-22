@@ -151,7 +151,7 @@
         "kind": "manual",
         "dataSourceId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1003"
       },
-      "text": "RapidTransitStations() | project StationName, RouteName, RouteId, Latitude, Longitude",
+      "text": "RapidTransitStations() | project Agency, RouteName, StationName, Latitude, Longitude",
       "usedVariables": []
     }
   ],
@@ -350,7 +350,7 @@
     },
     {
       "id": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e3012",
-      "title": "Rapid transit stations (scheduled, no live vehicles)",
+      "title": "Rapid transit network: TTC LRT and GO rail (scheduled, no live vehicles)",
       "pageId": "9c1f0f4a-7d21-4a17-9d0f-2b6a4c8e1004",
       "layout": {
         "x": 0,

@@ -32,7 +32,7 @@ lakehouse_abfss = "{{LAKEHOUSE_ABFSS}}"
 import json
 import traceback
 
-from pyspark.sql.functions import coalesce, col, regexp_replace, trim
+from pyspark.sql.functions import coalesce, col, lit, regexp_replace, trim
 
 summary = {"ok": False, "stage": "start", "layer": "gold"}
 
@@ -86,25 +86,44 @@ try:
         col("route_long_name").alias("RouteName"),
     )
 
-    station_stops = (
-        rapid.join(trips.select("route_id", "trip_id"), "route_id")
-        .join(stop_times.select("trip_id", "stop_id"), "trip_id")
-        .join(stops.select("stop_id", "stop_name", "stop_lat", "stop_lon"), "stop_id")
-        .where(col("stop_name").contains("Station"))
-    )
-
-    stations = (
-        station_stops.select(
-            col("RouteId"),
-            col("RouteName"),
-            # Collapse the per-direction platform rows into one station.
-            trim(regexp_replace(col("stop_name"), r" - .*$", "")).alias("StationName"),
-            col("stop_lat").cast("double").alias("Latitude"),
-            col("stop_lon").cast("double").alias("Longitude"),
+    def stations_for(routes_df, trips_df, times_df, stops_df, agency):
+        """Collapse per-direction platform rows into one row per station."""
+        return (
+            routes_df.join(trips_df.select("route_id", "trip_id"), "route_id")
+            .join(times_df.select("trip_id", "stop_id"), "trip_id")
+            .join(
+                stops_df.select("stop_id", "stop_name", "stop_lat", "stop_lon"),
+                "stop_id",
+            )
+            .select(
+                lit(agency).alias("Agency"),
+                col("RouteId"),
+                col("RouteName"),
+                trim(regexp_replace(col("stop_name"), r" - .*$", "")).alias("StationName"),
+                col("stop_lat").cast("double").alias("Latitude"),
+                col("stop_lon").cast("double").alias("Longitude"),
+            )
+            .where(col("Latitude").isNotNull() & col("Longitude").isNotNull())
+            .distinct()
         )
-        .where(col("Latitude").isNotNull() & col("Longitude").isNotNull())
-        .distinct()
+
+    ttc_stations = stations_for(rapid, trips, stop_times, stops, "TTC")
+
+    # GO Transit rail corridors extend the view across the region. Route type 2
+    # is heavy rail, which excludes the GO bus network.
+    go_routes = spark.read.format("delta").load(f"{lakehouse_abfss}/Tables/bronze_go_routes")
+    go_trips = spark.read.format("delta").load(f"{lakehouse_abfss}/Tables/bronze_go_trips")
+    go_times = spark.read.format("delta").load(f"{lakehouse_abfss}/Tables/bronze_go_stop_times")
+    go_stops = spark.read.format("delta").load(f"{lakehouse_abfss}/Tables/bronze_go_stops")
+
+    go_rail = go_routes.where(col("route_type") == "2").select(
+        col("route_id"),
+        col("route_short_name").alias("RouteId"),
+        col("route_long_name").alias("RouteName"),
     )
+    go_stations = stations_for(go_rail, go_trips, go_times, go_stops, "GO Transit")
+
+    stations = ttc_stations.unionByName(go_stations)
 
     station_target = f"{lakehouse_abfss}/Tables/gold_rapid_transit_stations"
     (

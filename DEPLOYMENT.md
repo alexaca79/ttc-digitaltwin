@@ -179,7 +179,7 @@ Reusable functions are defined in `DatabaseSchema.kql`:
 * `CurrentFleet()` returns the newest observation per active vehicle.
 * `RoutePerformance()` summarizes schedule adherence by route and mode.
 * `ActiveAlerts()` returns alerts whose active window has not ended.
-* `RapidTransitStations()` returns Line 5 and Line 6 stations from GTFS.
+* `RapidTransitStations()` returns TTC LRT and GO rail stations from GTFS.
 
 ### Serving path
 
