@@ -32,8 +32,8 @@
       "name": "TTCOperations",
       "scopeId": "kusto",
       "kind": "manual-kusto",
-      "clusterUri": "CLUSTER_URI_TOKEN",
-      "database": "TTCOperations"
+      "clusterUri": "{{KQL_CLUSTER_URI}}",
+      "database": "{{KQL_DATABASE}}"
     }
   ],
   "pages": [

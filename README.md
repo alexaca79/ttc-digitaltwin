@@ -110,7 +110,7 @@ and stop sequence and wraps the difference into plus or minus twelve hours.
 | `TTCTelemetry` | Eventstream | Optional Custom Endpoint path |
 | `TTCFeedDecoder` | Notebook | Optional Eventstream decode path |
 
-## Dashboard
+## Dashboards
 
 `TTCLiveOperations` refreshes every minute and reads Eventhouse directly. No web
 tier sits between the operator and the data.
@@ -132,6 +132,33 @@ tier sits between the operator and the data.
 
 Open it from the Fabric portal. Fabric identity governs access, so there is no
 separate sign-in and no publicly reachable endpoint.
+
+### Executive view
+
+`TTCExecutiveView` answers the questions a service owner asks rather than a
+controller. It reports on time performance against a benchmark, the trend over
+days, which corridors need intervention now, and which ones breach the
+benchmark repeatedly rather than occasionally.
+
+| Tile | Question it answers |
+| --- | --- |
+| On time performance | Is the network meeting the standard |
+| Variance to benchmark | By how much are we missing it |
+| Vehicles and routes | How much service is actually running |
+| Active disruptions | What is degrading the network |
+| 90th percentile delay | How bad is the tail, not the average |
+| Daily trend | Are we improving or drifting |
+| Service period | Is the problem concentrated in a peak |
+| Corridors needing intervention | Where to act today |
+| Chronic underperformers | What is structural, not incidental |
+
+On time means within five minutes of schedule, the common transit standard.
+The 90 percent benchmark is a parameter, not an official TTC commitment.
+Metrolinx publishes roughly 95 percent for GO rail.
+
+This view covers service performance only. Ridership, revenue, vehicle
+reliability, customer satisfaction, and safety are not in any open feed this
+workload consumes, so the view does not imply them.
 
 ## Ingestion
 

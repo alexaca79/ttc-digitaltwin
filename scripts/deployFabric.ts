@@ -125,6 +125,15 @@ function dashboardDefinition(variables: Record<string, string>) {
     ],
   };
 }
+
+function executiveDashboardDefinition(variables: Record<string, string>) {
+  return {
+    parts: [
+      jsonPart('dashboard-exec/ExecutiveDashboard.json', variables, 'ExecutiveDashboard.json'),
+      textPart('dashboard-exec/.platform', '.platform'),
+    ],
+  };
+}
 function eventstreamDefinition(variables: Record<string, string>) {
   return {
     format: 'eventstream',
@@ -229,6 +238,10 @@ async function main() {
         })
       ),
       dashboard: dashboardDefinition({
+        KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
+        KQL_DATABASE: 'TTCOperations',
+      }),
+      executiveDashboard: executiveDashboardDefinition({
         KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
         KQL_DATABASE: 'TTCOperations',
       }),
@@ -385,6 +398,27 @@ async function main() {
     );
   }
 
+  const { item: execDashboard, created: execCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'kqlDashboards',
+    'TTCExecutiveView',
+    {
+      displayName: 'TTCExecutiveView',
+      description: 'Executive service performance view for TTC and GO Transit.',
+      definition: executiveDashboardDefinition(dashboardVariables),
+    }
+  );
+  if (!execCreated) {
+    await updateFabricDefinition(
+      token,
+      workspaceId,
+      'kqlDashboards',
+      execDashboard.id,
+      executiveDashboardDefinition(dashboardVariables)
+    );
+  }
+
   const variables = {
     WORKSPACE_ID: workspaceId,
     KQL_DATABASE_ID: kqlDatabase.id,
@@ -438,6 +472,7 @@ async function main() {
     lakehouseId: lakehouse.id,
     lakehouseAbfss,
     dashboardId: dashboard.id,
+    executiveDashboardId: execDashboard.id,
     deployedAt: new Date().toISOString(),
   };
   const outputPath = join(root, '.fabric', 'deployment.local.json');

@@ -1,0 +1,337 @@
+{
+  "id": "7a3e1c22-0000-4000-8000-000000000000",
+  "schema_version": "52",
+  "title": "TTCExecutiveView",
+  "autoRefresh": {
+    "enabled": true,
+    "defaultInterval": "5m",
+    "minimumInterval": "1m"
+  },
+  "baseQueries": [],
+  "parameters": [],
+  "dataSources": [
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000001",
+      "name": "TTCOperations",
+      "scopeId": "kusto",
+      "kind": "manual-kusto",
+      "clusterUri": "{{KQL_CLUSTER_URI}}",
+      "database": "{{KQL_DATABASE}}"
+    }
+  ],
+  "pages": [
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000002",
+      "name": "Service performance"
+    }
+  ],
+  "queries": [
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000010",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ExecutiveScorecard() | project OnTimePct",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000011",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ExecutiveScorecard() | project VarianceToBenchmark",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000012",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ExecutiveScorecard() | project Vehicles",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000013",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ExecutiveScorecard() | project Routes",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000014",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ExecutiveScorecard() | project Disruptions",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000015",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ExecutiveScorecard() | project P90DelaySec",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000016",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "PerformanceTrend() | project Day, OnTimePct, Benchmark",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000017",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "PeakComparison() | project Period, OnTimePct",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000018",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "WorstCorridors() | project RouteId, Mode, Vehicles, LatePct, MedianDelaySec, WorstDelayMin",
+      "usedVariables": []
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000019",
+      "dataSource": {
+        "kind": "manual",
+        "dataSourceId": "7a3e1c22-0000-4000-8000-000000000001"
+      },
+      "text": "ChronicUnderperformers() | project RouteId, Mode, DaysMeasured, DaysBelowBenchmark, BreachRate, AvgOnTimePct",
+      "usedVariables": []
+    }
+  ],
+  "tiles": [
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000020",
+      "title": "On time performance (24h)",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000010"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "auto",
+        "colorRulesDisabled": true,
+        "multiStat__valueColumn": "OnTimePct"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000021",
+      "title": "Variance to 90 percent benchmark",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 4,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000011"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "auto",
+        "colorRulesDisabled": true,
+        "multiStat__valueColumn": "VarianceToBenchmark"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000022",
+      "title": "Vehicles in service",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 8,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000012"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "auto",
+        "colorRulesDisabled": true,
+        "multiStat__valueColumn": "Vehicles"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000023",
+      "title": "Routes operating",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 12,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000013"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "auto",
+        "colorRulesDisabled": true,
+        "multiStat__valueColumn": "Routes"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000024",
+      "title": "Active disruptions",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 16,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000014"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "auto",
+        "colorRulesDisabled": true,
+        "multiStat__valueColumn": "Disruptions"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000025",
+      "title": "90th percentile delay seconds",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 20,
+        "y": 0,
+        "width": 4,
+        "height": 3
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000015"
+      },
+      "visualType": "card",
+      "visualOptions": {
+        "multiStat__textSize": "auto",
+        "colorRulesDisabled": true,
+        "multiStat__valueColumn": "P90DelaySec"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000026",
+      "title": "Daily on time trend against benchmark",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 3,
+        "width": 14,
+        "height": 9
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000016"
+      },
+      "visualType": "linechart",
+      "visualOptions": {
+        "xColumn": {
+          "type": "infer"
+        },
+        "yColumns": {
+          "type": "infer"
+        },
+        "yAxisMinimumValue": 0,
+        "yAxisMaximumValue": 100,
+        "hideLegend": false,
+        "xColumnTitle": "Day",
+        "yColumnTitle": "On time percent"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000027",
+      "title": "On time by service period",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 14,
+        "y": 3,
+        "width": 10,
+        "height": 9
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000017"
+      },
+      "visualType": "bar",
+      "visualOptions": {
+        "xColumn": {
+          "type": "infer"
+        },
+        "yColumns": {
+          "type": "infer"
+        },
+        "hideLegend": true,
+        "yColumnTitle": "On time percent"
+      }
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000028",
+      "title": "Corridors needing intervention now",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 0,
+        "y": 12,
+        "width": 12,
+        "height": 9
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000018"
+      },
+      "visualType": "table",
+      "visualOptions": {}
+    },
+    {
+      "id": "7a3e1c22-0000-4000-8000-000000000029",
+      "title": "Chronic underperformers across repeated days",
+      "pageId": "7a3e1c22-0000-4000-8000-000000000002",
+      "layout": {
+        "x": 12,
+        "y": 12,
+        "width": 12,
+        "height": 9
+      },
+      "queryRef": {
+        "kind": "query",
+        "queryId": "7a3e1c22-0000-4000-8000-000000000019"
+      },
+      "visualType": "table",
+      "visualOptions": {}
+    }
+  ]
+}
