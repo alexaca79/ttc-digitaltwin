@@ -18,7 +18,10 @@
 # Eventhouse where KQL serves the live application.
 #
 # One run polls for `run_duration_seconds`, sleeping `poll_seconds` between
-# cycles. Schedule it to match the duration for continuous coverage.
+# cycles, then exits so the capacity is free until the next scheduled run.
+# Keep the total well inside the schedule interval. Spark session startup adds
+# several minutes, and a session that outlives its interval overlaps the next
+# one, which exhausts capacity and fails every subsequent run.
 
 # CELL ********************
 
@@ -47,7 +50,7 @@ kql_database = "TTCOperations"
 lakehouse_abfss = "{{LAKEHOUSE_ABFSS}}"
 feed_base_url = "https://bustime.ttc.ca/gtfsrt"
 poll_seconds = 15
-run_duration_seconds = 1680
+run_duration_seconds = 300
 
 # METADATA ********************
 

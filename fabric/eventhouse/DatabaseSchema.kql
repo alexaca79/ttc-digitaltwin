@@ -106,3 +106,114 @@
     | summarize arg_max(LoadedAt, *) by Agency, RouteId, StationName
     | project Agency, RouteId, RouteName, StationName, Latitude, Longitude
 }
+
+// ---------------------------------------------------------------------------
+// Executive layer
+//
+// On time means within five minutes of schedule, the common transit standard.
+// The benchmark defaults to 90 percent and is a parameter, not an official TTC
+// commitment. Metrolinx publishes roughly 95 percent for GO rail.
+// ---------------------------------------------------------------------------
+
+.create-or-alter function with (folder='Executive', docstring='Headline service KPIs for the selected window') ExecutiveScorecard(Lookback:timespan = 24h, Benchmark:real = 90.0) {
+    let scored = VehiclePositions
+        | where ObservedAt > ago(Lookback)
+        | where isnotnull(ScheduleDeviationSeconds);
+    let fleet = VehiclePositions
+        | where ObservedAt > ago(Lookback)
+        | summarize Vehicles = dcount(VehicleId), Routes = dcount(RouteId);
+    let alerts = ServiceAlerts
+        | where ObservedAt > ago(Lookback)
+        | summarize Disruptions = dcount(AlertId);
+    scored
+    | summarize
+        Observations = count(),
+        OnTimePct = round(100.0 * countif(abs(ScheduleDeviationSeconds) <= 300) / count(), 1),
+        LatePct = round(100.0 * countif(ScheduleDeviationSeconds > 300) / count(), 1),
+        EarlyPct = round(100.0 * countif(ScheduleDeviationSeconds < -300) / count(), 1),
+        MedianDeviationSec = round(percentile(ScheduleDeviationSeconds, 50), 0),
+        P90DelaySec = round(percentile(ScheduleDeviationSeconds, 90), 0)
+    | extend Benchmark = Benchmark, VarianceToBenchmark = round(OnTimePct - Benchmark, 1)
+    | extend Status = iff(OnTimePct >= Benchmark, 'At or above benchmark', 'Below benchmark')
+    | extend Vehicles = toscalar(fleet | project Vehicles), Routes = toscalar(fleet | project Routes)
+    | extend Disruptions = toscalar(alerts | project Disruptions)
+}
+
+.create-or-alter function with (folder='Executive', docstring='Daily on time trend against the benchmark') PerformanceTrend(Lookback:timespan = 14d, Benchmark:real = 90.0) {
+    VehiclePositions
+    | where ObservedAt > ago(Lookback)
+    | where isnotnull(ScheduleDeviationSeconds)
+    | summarize
+        OnTimePct = round(100.0 * countif(abs(ScheduleDeviationSeconds) <= 300) / count(), 1),
+        Observations = count()
+      by Day = bin(ObservedAt, 1d)
+    // Thin coverage produces misleading points, so require a usable sample.
+    | where Observations > 500
+    | extend Benchmark = Benchmark
+    | order by Day asc
+}
+
+.create-or-alter function with (folder='Executive', docstring='Corridors ranked by share of vehicles running late') WorstCorridors(Lookback:timespan = 24h, Take:int = 10) {
+    VehiclePositions
+    | where ObservedAt > ago(Lookback)
+    | where isnotnull(ScheduleDeviationSeconds)
+    | summarize
+        Vehicles = dcount(VehicleId),
+        Observations = count(),
+        LatePct = round(100.0 * countif(ScheduleDeviationSeconds > 300) / count(), 1),
+        MedianDelaySec = round(percentile(ScheduleDeviationSeconds, 50), 0),
+        WorstDelayMin = round(max(ScheduleDeviationSeconds) / 60.0, 1)
+      by RouteId, Mode
+    | where Observations > 100
+    | order by LatePct desc
+    | take Take
+}
+
+.create-or-alter function with (folder='Executive', docstring='Peak versus off peak service performance') PeakComparison(Lookback:timespan = 7d) {
+    VehiclePositions
+    | where ObservedAt > ago(Lookback)
+    | where isnotnull(ScheduleDeviationSeconds)
+    | extend LocalHour = datetime_utc_to_local(ObservedAt, 'America/Toronto')
+    | extend Hour = hourofday(LocalHour), Weekday = dayofweek(LocalHour)
+    | extend Period = case(
+        Weekday == 0d or Weekday == 6d, 'Weekend',
+        Hour between (6 .. 9), 'AM peak',
+        Hour between (15 .. 18), 'PM peak',
+        'Off peak')
+    | summarize
+        OnTimePct = round(100.0 * countif(abs(ScheduleDeviationSeconds) <= 300) / count(), 1),
+        Vehicles = dcount(VehicleId),
+        Observations = count()
+      by Period
+    | order by OnTimePct asc
+}
+
+.create-or-alter function with (folder='Executive', docstring='Routes below benchmark on multiple days, which signals a structural rather than incidental problem') ChronicUnderperformers(Lookback:timespan = 14d, Benchmark:real = 90.0) {
+    VehiclePositions
+    | where ObservedAt > ago(Lookback)
+    | where isnotnull(ScheduleDeviationSeconds)
+    | summarize
+        OnTimePct = round(100.0 * countif(abs(ScheduleDeviationSeconds) <= 300) / count(), 1),
+        Observations = count()
+      by RouteId, Mode, Day = bin(ObservedAt, 1d)
+    | where Observations > 100
+    | summarize
+        DaysMeasured = count(),
+        DaysBelowBenchmark = countif(OnTimePct < Benchmark),
+        AvgOnTimePct = round(avg(OnTimePct), 1)
+      by RouteId, Mode
+    | where DaysMeasured >= 2 and DaysBelowBenchmark >= 2
+    | extend BreachRate = round(100.0 * DaysBelowBenchmark / DaysMeasured, 0)
+    | order by DaysBelowBenchmark desc, AvgOnTimePct asc
+    | take 15
+}
+
+.create-or-alter function with (folder='Executive', docstring='Network reach across both agencies') NetworkCoverage() {
+    let live = VehiclePositions
+        | where ObservedAt > ago(24h)
+        | summarize Value = todouble(dcount(RouteId)) by Category = strcat('Live routes: ', Mode);
+    let infra = RapidTransitStations()
+        | summarize Value = todouble(dcount(StationName)) by Category = strcat('Stations: ', Agency);
+    union live, infra
+    | order by Category asc
+}
