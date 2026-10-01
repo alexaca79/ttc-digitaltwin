@@ -1,20 +1,21 @@
 ---
-title: TTC Digital Twin
-description: Open-data TTC macro operations twin running entirely on Microsoft Fabric
-ms.date: 2026-08-22
+title: GTA Transit Digital Twin
+description: TTC live operations and TTC, GO Transit, and UP Express GTFS networks on Microsoft Fabric
+ms.date: 2026-10-01
 ms.topic: overview
 ---
 
 ## Scope
 
-This workload is a macro operations and service twin for the Toronto Transit
-Commission, running entirely on Microsoft Fabric. It ingests, stores, enriches,
-and serves TTC open data without any compute outside Fabric.
+GTA Transit Digital Twin combines TTC, GO Transit, and UP Express routes,
+geometry, stops, trips, and service calendars. The Fabric-hosted application
+supports agency and transport-mode filters, scheduled route and station search,
+route focusing, and feed provenance. TTC bus and streetcar live telemetry comes
+from the existing publisher and Eventhouse pipeline.
 
-It models routes, stops, trips, live surface vehicles, schedule adherence, and
-service alerts. It does not model asset health, internal facilities, tunnel
-geometry, track condition, signaling, or maintenance telemetry, because those
-datasets are not published as TTC open data.
+The application models published service, not asset health, internal facilities,
+tunnel geometry, track condition, signaling, or maintenance telemetry. A static
+GTFS trip is a scheduled trip, not an observed vehicle or proof that it ran.
 
 To deploy it, start with the [deployment quickstart](DEPLOYMENT-QUICKSTART.md).
 For operations, rollback, and recovery, read [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -22,63 +23,41 @@ For operations, rollback, and recovery, read [DEPLOYMENT.md](DEPLOYMENT.md).
 > [!IMPORTANT]
 > TTC BusTime GTFS-realtime covers buses and streetcars. Subway and LRT
 > real-time vehicle data is not published. Subway routes and stops appear from
-> static GTFS, and the workload never fabricates live subway positions.
+> static GTFS, and the workload never fabricates live subway positions. The
+> application's live KPIs remain explicitly TTC-only when GO or UP is selected.
 
-The rapid transit tile shows TTC Line 5 Eglinton and Line 6 Finch West plus all
-seven GO Transit rail corridors, drawn from static GTFS. These are
-infrastructure context, not live positions.
+GO Transit includes all seven rail corridors and the bus routes present in its
+official feed. UP Express has its own feed and agency filter. GO/UP live vehicle
+positions and live delay KPIs are not enabled: their authenticated real-time
+feed access is not configured. The UI labels these routes as scheduled service.
 
-No live vehicles exist for any of them. TTC does not publish realtime data for
-LRT, and Metrolinx puts its GTFS-realtime feeds behind a registered access key
-that this repository does not carry. The tile title says so, because an empty
-line otherwise reads as a service outage.
+The September 28 import contains 281 routes, 10,411 linked stops/stations, and
+267,287 trips across the feeds' published service windows. These are not daily
+or concurrently operating trip counts. Every supplied GTFS table is retained,
+including GO fare, transfer, and stop-amenity files. Retention does not imply
+that fare calculation or every optional GTFS extension has a dedicated UI.
 
 ## Data Architecture
 
-Storage is split by how the data behaves. The timetable is republished daily and
-earns a Lakehouse with medallion layers. Vehicle telemetry changes every few
-seconds and earns an Eventhouse that KQL can serve directly.
+Static data and live observations remain separate. Official TTC, GO, and UP
+archives are retained in OneLake, and the map-ready network is published with
+the app. The existing TTC schedule medallion notebooks remain available. Live
+TTC observations flow through the publisher and Eventstream into Eventhouse.
 
 ```mermaid
 flowchart TB
-  subgraph Sources["Open data sources"]
-    RT["TTC GTFS-realtime<br/>protobuf over HTTP<br/>vehicles, trips, alerts"]
-    Static["City of Toronto GTFS archive<br/>published daily"]
-  end
-
-  subgraph Fabric["Microsoft Fabric"]
-    direction TB
-
-    subgraph Batch["TTCSchedule Lakehouse — static, daily"]
-      Bronze["bronze_stop_times<br/>bronze_trips<br/>as published"]
-      Silver["silver_stop_times<br/>typed, clock times to seconds"]
-      Gold["gold_schedule_lookup<br/>trip and stop grain"]
-    end
-
-    subgraph Stream["TTCOperations Eventhouse — live"]
-      VP["VehiclePositions<br/>30 day retention"]
-      TU["TripUpdates<br/>30 day retention"]
-      SA["ServiceAlerts<br/>90 day retention"]
-    end
-
-    Ingest["TTCNativeIngest notebook<br/>fetch, decode, enrich<br/>every 30 min"]
-    Fn["KQL functions<br/>CurrentFleet, ActiveAlerts,<br/>RoutePerformance"]
-    Dash["TTCLiveOperations<br/>Real-Time Dashboard"]
-  end
-
-  Operator["TTC operator"]
-
-  Static -->|"daily 03:00 ET"| Bronze
-  Bronze --> Silver --> Gold
-  RT -->|"every 15 s"| Ingest
-  Gold -->|"schedule adherence"| Ingest
-  Ingest --> VP
-  Ingest --> TU
-  Ingest --> SA
-  VP --> Fn
-  SA --> Fn
-  Fn --> Dash
-  Dash --> Operator
+  TTC["TTC static GTFS"] --> Import["GTFS importer and validation"]
+  GO["GO Transit static GTFS"] --> Import
+  UP["UP Express static GTFS"] --> Import
+  Import --> Archives["OneLake: full archives and provenance"]
+  Import --> Network["GTA route, shape, and stop links"]
+  Network --> App["GTA Transit Digital Twin on Fabric"]
+  RT["TTC GTFS-realtime"] --> Publisher["Existing publisher: complete snapshots"]
+  Publisher --> App
+  Publisher --> Eventstream["Fabric Eventstream"]
+  Eventstream --> Eventhouse["TTCOperations Eventhouse"]
+  Eventhouse --> Dash["Existing analytics dashboards"]
+  Eventhouse -->|"validated fallback"| App
 ```
 
 ### Why the split
@@ -109,6 +88,7 @@ and stop sequence and wraps the difference into plus or minus twelve hours.
 | `TTCLiveOperations` | Real-Time Dashboard | Operator surface |
 | `TTCTelemetry` | Eventstream | Optional Custom Endpoint path |
 | `TTCFeedDecoder` | Notebook | Optional Eventstream decode path |
+| `GoTtcInterchange` | Notebook | GO and TTC interchange connection analysis |
 
 ## Dashboards
 
@@ -160,11 +140,114 @@ This view covers service performance only. Ridership, revenue, vehicle
 reliability, customer satisfaction, and safety are not in any open feed this
 workload consumes, so the view does not imply them.
 
+### Application metrics
+
+The web application's top metrics use the publisher's complete `/api/snapshot`
+response first. Eventhouse ingests records asynchronously, so counting a batch
+that is still arriving can understate the current fleet. `/api/live` remains a
+fallback and includes only observations from the last two minutes. An empty
+Eventhouse fleet is unavailable, not a newly observed zero-vehicle fleet.
+
+These metrics are network-wide and do not change with map filters. On schedule
+means between two minutes early and three minutes late, inclusive, among
+vehicles with a finite schedule estimate. Unknown estimates are excluded from
+the percentage; coverage and the measured denominator are displayed. This is
+separate from the executive dashboard's five-minute benchmark.
+
+Loading and unavailable metrics are not displayed as zero. Failed refreshes
+retain the last successful snapshot; stale, paused, and simulated data are
+explicitly labeled. Keep the bundled timetable current with `npm run gtfs:sync`
+and rebuild the publisher when TTC changes its schedule.
+
+The publisher image bundles the TTC timetable at build time, and a republished
+TTC feed can reuse trip IDs for unrelated trips. The publisher therefore
+ignores a schedule match when the timetable places the trip on a different
+route than the realtime update, or when the gap exceeds two hours. Those
+vehicles show as not reported rather than hours early or late, so a drop in
+estimate coverage is the signal to rebuild the publisher.
+
+### Spatial data
+
+`npm run gtfs:sync` imports TTC, GO Transit, and UP Express route shapes through the GTFS
+`routes -> trips -> shapes` relationships. Each route's `paths` array retains
+separate branches and directions; renderers never connect one shape's endpoint
+to another shape's start. Turf simplifies each shape with a `0.00001` degree
+tolerance (about one metre), preserving endpoints and meaningful turns.
+
+Both map renderers paint buses first, then streetcars, regional rail, and the
+TTC subway lines, so rapid transit stays visible above the dense surface
+network. Subway and rail lines draw wider than surface routes, and a focused
+route paints above everything else.
+
+Stops are linked through `trips -> stop_times -> stops`. Platforms and their
+parent stations follow the selected bus, streetcar, or subway routes; entrances
+and unserved stops are excluded. Transport modes follow GTFS `route_type`, with
+one exception: type 0 covers both streetcars and light rail, so TTC's light rail
+rapid transit lines, which TTC names `<name> Line` (Line 5 Eglinton and Line 6
+Finch West), are grouped with the subway lines. Regional rail uses type 2. GO
+and UP identifiers are prefixed with `go:` and `up:`; original GTFS IDs are
+retained. TTC IDs stay unchanged for live joins.
+The app displays a spatial-data error when official geometry is unavailable
+instead of silently substituting hand-drawn demo lines.
+
+Run spatial browser checks with `UI_TEST_SPATIAL_ONLY=true` and
+`npm run validate:ui` against the local demo server. These checks use the real
+imported geometry and fixture telemetry across both map renderers and desktop
+and mobile viewports. Publish the rebuilt static app after regenerating
+`public/data/gta-network.json`; no telemetry-table rewrite is required. The
+TTC-only asset remains available for compatibility.
+
+Raw feeds and indexes are stored under `data/gtfs-static/` for TTC and its
+`go/` and `up/` subdirectories. Each feed has an import manifest containing its
+source, licence, date range, version, file list, and counts. `TTC_GTFS_STATIC_URL`,
+`GO_GTFS_STATIC_URL`, and `UP_GTFS_STATIC_URL` can override the official URLs.
+Each deployed source snapshot is retained under
+`TTCSchedule/Files/gta-gtfs/<UTC timestamp>/` in OneLake, and earlier snapshots
+are kept. The current one is `20260930T1732Z`. The archives include all
+tables supplied by each agency, not only the subset used by the map renderer.
+
+## GO and TTC Interchange Analysis
+
+The `GoTtcInterchange` notebook asks how well GO trains and TTC routes hand
+riders to each other. It reads the newest GTFS snapshot in OneLake, picks the
+first weekday from today that both agencies run, and studies every GO rail
+station with TTC stops within a 350 m walk.
+
+| Question | Measure |
+| --- | --- |
+| Are TTC departures timed around GO arrivals? | Coordination index per TTC route-direction, tested against randomly shifted GO arrivals |
+| How long from a train to the first TTC vehicle? | Minutes from each GO arrival to the first reachable TTC departure, including the walk |
+| Do TTC feeders aim at GO departures? | TTC arrivals landing just before versus just after each GO departure |
+| How often does TTC lateness cost a rider the train? | Live TTC schedule deviation from `TTCOperations` applied to the tightest planned connections |
+
+On the October 1, 2026 timetable, 23 of 71 GO rail stations are TTC
+interchanges. The median coordination index across TTC route-directions is
+0.99, and TTC feeder arrivals split evenly before and after GO departures, so
+the two timetables are planned independently. Handoffs take a median of about
+3 to 5 minutes at Eglinton, Kipling, and Mount Dennis but 11 to 27 minutes at
+Old Cummer, Markham, and Mount Joy. Observed TTC lateness would break about
+13 percent of the tightest planned TTC to GO connections.
+
+Results are overwritten in `gold_go_ttc_interchanges`, `gold_go_ttc_handoffs`,
+and `gold_go_ttc_feeder_risk` in the `TTCSchedule` lakehouse. Each row carries
+its service date and GTFS snapshot. Connections are planned, not observed:
+GO real-time data is not configured, so GO punctuality is not modelled.
+
 ## Ingestion
 
-`TTCNativeIngest` runs on a thirty minute schedule and polls for the length of
-its window, so one Spark session covers the interval rather than paying startup
-on every poll.
+The application deployment uses the continuously running publisher and the
+Eventstream's vehicle, trip, and alert destinations. Keep the alternate
+`TTCNativeIngest` schedule disabled when this path is active to avoid duplicate
+ingestion.
+
+Set `TTC_POLL_INTERVAL_MS=60000` for the deployed publisher. Publishing complete
+trip-update feeds every 15 seconds can build up an Eventstream backlog; the
+one-minute cadence matches the operations dashboard refresh. The web client
+checks for a new complete snapshot every 15 seconds and displays its age.
+
+For the Fabric-native alternative, `TTCNativeIngest` runs on a thirty minute
+schedule and polls for the length of its window, so one Spark session covers
+the interval rather than paying startup on every poll.
 
 Each cycle fetches the three GTFS-realtime feeds, decodes the protobuf, derives
 schedule adherence from the gold lookup, and appends to Eventhouse.
@@ -179,6 +262,7 @@ across the gap between scheduled sessions.
 | TTC GTFS-realtime | City of Toronto Open Data |
 | Merged GTFS routes and schedules | City of Toronto Open Data |
 | GO Transit static GTFS | Metrolinx Open Data |
+| UP Express static GTFS | Metrolinx Access and Use Agreement |
 
 Attribution and dataset links are listed in [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -191,6 +275,7 @@ fabric/notebook-ingest/  Fabric-native ingestion
 fabric/notebook-bronze/  Static GTFS landing
 fabric/notebook-silver/  Typing and cleaning
 fabric/notebook-gold/    Schedule lookup
+fabric/notebook-interchange/  GO and TTC interchange analysis
 fabric/eventstream/      Optional Custom Endpoint path
 scripts/                 Deployment and validation tooling
 ingest/                  Publisher used by the optional container path
