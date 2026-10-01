@@ -1,5 +1,8 @@
 const SECONDS_PER_DAY = 24 * 60 * 60;
 const HALF_DAY_SECONDS = SECONDS_PER_DAY / 2;
+// Gaps beyond this come from a stale timetable matching an unrelated trip,
+// not from a vehicle actually running hours off schedule.
+export const MAX_PLAUSIBLE_DEVIATION_SECONDS = 2 * 60 * 60;
 const torontoTimeFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Toronto',
   hour: '2-digit',
@@ -39,10 +42,11 @@ export function computeScheduleDeviation(
 
   const scheduledSecondOfDay = scheduledSeconds % SECONDS_PER_DAY;
   const rawDifference = predictedSeconds - scheduledSecondOfDay;
-  return (
+  const deviation = (
     ((rawDifference + HALF_DAY_SECONDS) % SECONDS_PER_DAY + SECONDS_PER_DAY)
       % SECONDS_PER_DAY
   ) - HALF_DAY_SECONDS;
+  return Math.abs(deviation) > MAX_PLAUSIBLE_DEVIATION_SECONDS ? null : deviation;
 }
 
 export function medianDeviation(values: number[]) {

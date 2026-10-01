@@ -24,6 +24,8 @@ interface ScheduleOffsetIndex {
   sourceSize: number;
   sourceModifiedMs: number;
   trips: Record<string, ByteRange[]>;
+  /** Route per trip, from trips.txt; absent in indexes built without it. */
+  routes?: Record<string, string>;
 }
 
 export interface ScheduledStopTime {
@@ -35,7 +37,7 @@ export interface ScheduledStopTime {
 
 export interface GtfsScheduleLookup {
   prefetch(tripIds: Iterable<string>): Promise<void>;
-  getStopTime(tripId: string, stopSequence: number, stopId: string): ScheduledStopTime | null;
+  getStopTime(tripId: string, stopSequence: number, stopId: string, routeId?: string): ScheduledStopTime | null;
   close(): void;
 }
 
@@ -51,7 +53,11 @@ function newlineLength(path: string) {
   }
 }
 
-export async function buildGtfsScheduleIndex(stopTimesPath: string, indexPath: string) {
+export async function buildGtfsScheduleIndex(
+  stopTimesPath: string,
+  indexPath: string,
+  tripsPath = join(dirname(stopTimesPath), 'trips.txt')
+) {
   const source = statSync(stopTimesPath);
   const lineEndingLength = newlineLength(stopTimesPath);
   const trips: Record<string, ByteRange[]> = Object.create(null) as Record<string, ByteRange[]>;
@@ -94,11 +100,28 @@ export async function buildGtfsScheduleIndex(stopTimesPath: string, indexPath: s
   }
   finishRange();
 
+  let routes: Record<string, string> | undefined;
+  if (existsSync(tripsPath)) {
+    routes = Object.create(null) as Record<string, string>;
+    const records = parse(readFileSync(tripsPath), {
+      bom: true,
+      columns: true,
+      relaxColumnCount: true,
+      skipEmptyLines: true,
+    }) as Array<Record<string, string>>;
+    for (const record of records) {
+      if (record.trip_id && record.route_id && trips[record.trip_id]) {
+        routes[record.trip_id] = record.route_id;
+      }
+    }
+  }
+
   const index: ScheduleOffsetIndex = {
     version: 1,
     sourceSize: source.size,
     sourceModifiedMs: source.mtimeMs,
     trips,
+    ...(routes ? { routes } : {}),
   };
   mkdirSync(dirname(indexPath), { recursive: true });
   const temporaryPath = `${indexPath}.tmp`;
@@ -175,9 +198,13 @@ export async function openGtfsScheduleLookup(
       }
     },
 
-    getStopTime(tripId, stopSequence, stopId) {
+    getStopTime(tripId, stopSequence, stopId, routeId) {
       const stops = cache.get(tripId);
       if (!stops) return null;
+      // Republished timetables reuse trip IDs for unrelated trips. TTC realtime
+      // stop IDs differ from static ones, so the route is the reliable check.
+      const scheduledRoute = index?.routes?.[tripId];
+      if (routeId && scheduledRoute && scheduledRoute !== routeId) return null;
       const sequenceMatch = stops.find((stop) => stop.stopSequence === stopSequence);
       if (sequenceMatch) return sequenceMatch;
       const stopMatches = stops.filter((stop) => stop.stopId === stopId);
