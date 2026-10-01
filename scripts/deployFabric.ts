@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,6 +122,18 @@ function folderNotebookDefinition(folder: string, variables: Record<string, stri
     parts: [
       textPart(`${folder}/notebook-content.py`, 'notebook-content.py', variables),
       textPart(`${folder}/.platform`, '.platform'),
+    ],
+  };
+}
+
+/** Fabric map over the interchange notebook's GeoJSON layers and live TTCOperations vehicles. */
+function interchangeMapDefinition(variables: Record<string, string>) {
+  const queries = readdirSync(join(root, 'fabric', 'map-interchange', 'queries')).filter((name) => name.endsWith('.kql'));
+  return {
+    parts: [
+      jsonPart('map-interchange/map.json', variables, 'map.json'),
+      ...queries.map((name) => textPart(`map-interchange/queries/${name}`, `queries/${name}`)),
+      textPart('map-interchange/.platform', '.platform'),
     ],
   };
 }
@@ -252,6 +264,11 @@ async function main() {
           LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
         })
       ),
+      interchangeMap: interchangeMapDefinition({
+        WORKSPACE_ID: dummyGuid,
+        LAKEHOUSE_ID: dummyGuid,
+        KQL_DATABASE_ID: dummyGuid,
+      }),
       dashboard: dashboardDefinition({
         KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
         KQL_DATABASE: 'TTCOperations',
@@ -266,8 +283,9 @@ async function main() {
       `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts, ` +
         `${plan.notebook.parts.length} decoder notebook parts, ` +
         `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts, ` +
-        `${plan.medallionNotebooks.length} medallion notebooks, and ` +
-        `${plan.analysisNotebooks.length} analysis notebooks ` +
+        `${plan.medallionNotebooks.length} medallion notebooks, ` +
+        `${plan.analysisNotebooks.length} analysis notebooks, and a ` +
+        `${plan.interchangeMap.parts.length}-part interchange map ` +
         `routed to ${plan.kqlDatabase}.`
     );
     return;
@@ -408,6 +426,32 @@ async function main() {
     analysisNotebookIds[entry.name] = item.id;
   }
 
+  const mapVariables = {
+    WORKSPACE_ID: workspaceId,
+    LAKEHOUSE_ID: lakehouse.id,
+    KQL_DATABASE_ID: kqlDatabase.id,
+  };
+  const { item: interchangeMap, created: interchangeMapCreated } = await ensureFabricItem(
+    token,
+    workspaceId,
+    'maps',
+    'GoTtcInterchangeMap',
+    {
+      displayName: 'GoTtcInterchangeMap',
+      description: 'GO and TTC interchange handoffs, timing, and feeder risk, with live TTC vehicles.',
+      definition: interchangeMapDefinition(mapVariables),
+    }
+  );
+  if (!interchangeMapCreated) {
+    await updateFabricDefinition(
+      token,
+      workspaceId,
+      'maps',
+      interchangeMap.id,
+      interchangeMapDefinition(mapVariables)
+    );
+  }
+
   const dashboardVariables = {
     KQL_CLUSTER_URI: queryServiceUri,
     KQL_DATABASE: 'TTCOperations',
@@ -505,6 +549,7 @@ async function main() {
     nativeIngestNotebookId: nativeIngestNotebook.id,
     medallionNotebookIds,
     analysisNotebookIds,
+    interchangeMapId: interchangeMap.id,
     lakehouseId: lakehouse.id,
     lakehouseAbfss,
     dashboardId: dashboard.id,

@@ -648,9 +648,166 @@ print(json.dumps(written, indent=2))
 
 # MARKDOWN ********************
 
-# ### Findings
+# ### Map layers
+#
+# The `GoTtcInterchangeMap` Fabric map reads these GeoJSON layers from
+# `Files/maps/go-ttc-interchange/` in this lakehouse, so every run refreshes the
+# map. The map adds a live TTC vehicle layer queried straight from
+# `TTCOperations`.
+#
+# | Layer | Shows |
+# | --- | --- |
+# | `go-rail-lines` | GO rail corridors in their published colours |
+# | `ttc-rapid-transit` | TTC subway and LRT lines |
+# | `interchange-links` | Walk from each GO station to the TTC stop of every route-direction, coloured by timing |
+# | `interchanges` | Each interchange, coloured by median handoff time, with feeder risk from live TTC lateness |
 
 # CELL ********************
+
+map_folder = f"{lakehouse_abfss}/Files/maps/go-ttc-interchange"
+HANDOFF_BANDS = [(5, "#2e9d4f", "5 minutes or less"), (8, "#f2c94c", "5 to 8 minutes"), (12, "#f2994a", "8 to 12 minutes")]
+
+
+def handoff_band(minutes):
+    for limit, color, label in HANDOFF_BANDS:
+        if minutes <= limit:
+            return color, label
+    return "#da291c", "over 12 minutes"
+
+
+def plain(value):
+    """JSON-safe property value: NumPy scalars become Python values and NaN becomes null."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return None if np.isnan(value) else round(float(value), 3)
+    return value
+
+
+def feature(geometry, properties):
+    return {"type": "Feature", "geometry": geometry, "properties": {key: plain(value) for key, value in properties.items()}}
+
+
+def write_layer(name, features):
+    payload = json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":"))
+    notebookutils.fs.put(f"{map_folder}/{name}.geojson", payload, True)
+    return len(features)
+
+
+def direction_of(headsign):
+    heading = headsign.split(" - ")[0].strip().lower()
+    return f"{heading}bound" if heading in ("north", "south", "east", "west") else headsign
+
+
+go_lines, ttc_lines = [], []
+network_path = os.path.join(work_dir, "gta-network.json")
+try:
+    notebookutils.fs.cp(f"{snapshot_root}/{gtfs_snapshot}/gta-network.json", f"file:{network_path}")
+    with open(network_path, encoding="utf-8") as handle:
+        network = json.load(handle)
+    for route in network["routes"]:
+        agency = route.get("agency", "ttc")
+        rapid = route["mode"] == "subway" or (
+            agency == "ttc" and route["mode"] == "streetcar" and route["longName"].endswith(" Line")
+        )
+        if agency == "go" and route["mode"] == "rail":
+            target = go_lines
+        elif agency == "ttc" and rapid:
+            target = ttc_lines
+        else:
+            continue
+        paths = sorted({json.dumps(path) for path in (route.get("paths") or [route["path"]]) if len(path) >= 2})
+        target.append(feature(
+            {"type": "MultiLineString", "coordinates": [json.loads(path) for path in paths]},
+            {"agency": "GO Transit" if agency == "go" else "TTC", "route": route["shortName"],
+             "name": route["longName"], "color": route["color"]},
+        ))
+except Exception as error:  # noqa: BLE001 - the analysis layers stand without network context
+    print(f"Network context lines skipped ({type(error).__name__}: {error}).")
+
+stop_points = ttc["stops"].set_index("stop_id")
+station_points = stations.set_index("stop_id")
+links = []
+for row in handoffs.itertuples():
+    if row.ttc_stop_id not in stop_points.index or row.go_stop_id not in station_points.index:
+        continue
+    stop, station = stop_points.loc[row.ttc_stop_id], station_points.loc[row.go_stop_id]
+    links.append(feature(
+        {"type": "LineString", "coordinates": [[float(station.stop_lon), float(station.stop_lat)],
+                                               [float(stop.stop_lon), float(stop.stop_lat)]]},
+        {"station": row.go_station, "route": f"{row.route} {row.route_name}", "direction": direction_of(row.headsign),
+         "ttc_stop": stop.stop_name, "timing": row.timing, "color": TIMING_COLORS.get(row.timing, "#5f6368"),
+         "coordination_index": row.coordination_index, "p_value": row.p_value,
+         "mean_wait_minutes": row.mean_wait_minutes, "random_wait_minutes": row.random_wait_minutes,
+         "walk_minutes": row.walk_minutes, "go_arrivals": row.go_arrivals, "ttc_departures": row.ttc_departures},
+    ))
+
+timing_by_station = handoffs.groupby(["go_stop_id", "timing"]).size().unstack(fill_value=0)
+risk_by_station = feeders.groupby("go_stop_id").agg(
+    feeder_connections=("slack_seconds", "size"), feeder_risk=("miss_probability", "mean")
+)
+interchanges = []
+for row in scorecard.itertuples():
+    color, band = handoff_band(row.median_transfer_minutes)
+    counts = timing_by_station.loc[row.go_stop_id] if row.go_stop_id in timing_by_station.index else pd.Series(dtype=int)
+    risk = risk_by_station.loc[row.go_stop_id] if row.go_stop_id in risk_by_station.index else None
+    has_risk = risk is not None and not np.isnan(risk.feeder_risk)
+    interchanges.append(feature(
+        {"type": "Point", "coordinates": [float(row.longitude), float(row.latitude)]},
+        {"station": row.go_station, "label": f"{row.go_station} {row.median_transfer_minutes:.1f} min",
+         "median_transfer_minutes": row.median_transfer_minutes, "p90_transfer_minutes": row.p90_transfer_minutes,
+         "handoff_band": band, "handoff_color": color, "go_arrivals": row.go_arrivals,
+         "ttc_route_directions": row.ttc_route_directions, "rapid_transit": row.rapid_transit,
+         "timed_routes": counts.get("timed to meet GO", 0),
+         "mistimed_routes": counts.get("leaves just before GO arrives", 0),
+         "independent_routes": counts.get("independent", 0),
+         "feeder_connections": risk.feeder_connections if risk is not None else 0,
+         "feeder_risk_pct": round(100 * risk.feeder_risk, 1) if has_risk else None,
+         "service_date": day.isoformat()},
+    ))
+
+map_layers = {
+    "go-rail-lines": write_layer("go-rail-lines", go_lines),
+    "ttc-rapid-transit": write_layer("ttc-rapid-transit", ttc_lines),
+    "interchange-links": write_layer("interchange-links", links),
+    "interchanges": write_layer("interchanges", interchanges),
+}
+print(json.dumps(map_layers, indent=2))
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# MARKDOWN ********************
+
+# ### Findings
+#
+# GO and the TTC run as two separately planned networks that happen to meet at
+# 23 stations. On the October 1, 2026 timetable, the median coordination index
+# across 205 TTC route-directions is 0.99, and TTC feeder arrivals land 51
+# percent of the time just before a GO departure and 49 percent just after,
+# which is exactly what two unrelated timetables produce. Frequent TTC service
+# hides that independence at Eglinton, Kipling, and Mount Dennis, where a rider
+# is on a TTC vehicle within about 3 to 5 minutes of stepping off a train. Where
+# TTC service is thin, the rider absorbs it: median handoffs reach 11 to 12
+# minutes at Markham and Old Cummer and 27 minutes at Mount Joy, and early
+# morning arrivals wait close to half an hour at the 90th percentile. Seventeen
+# route-directions, led by the westbound 939 Finch Express at Kennedy,
+# consistently leave just before trains arrive, so the timetable itself adds
+# minutes. Reliability widens the gap: observed TTC lateness would break about
+# 13 percent of the tightest connections a trip planner offers toward GO, and
+# about one in five at Mount Dennis.
+#
+# The next cell recomputes these findings for the service date of each run.
+
+# CELL ********************
+
+import textwrap
 
 timing_counts = rated.timing.value_counts()
 covered = feeders.dropna(subset=["miss_probability"])
@@ -660,13 +817,27 @@ worst_timed = rated[rated.timing == "leaves just before GO arrives"].nlargest(3,
 best_timed = rated[rated.timing == "timed to meet GO"].nsmallest(3, "coordination_index")
 busy_periods = by_period[by_period.arrivals >= 10]
 hardest_period = busy_periods.p90.idxmax() if len(busy_periods) else None
+share_before = before / (before + after)
 
 
 def route_label(row):
-    heading = row.headsign.split(" - ")[0].strip().lower()
-    direction = f"{heading}bound" if heading in ("north", "south", "east", "west") else row.headsign
-    return f"{row.route} {row.route_name} {direction} at {row.go_station}"
+    return f"{row.route} {row.route_name} {direction_of(row.headsign)} at {row.go_station}"
 
+
+paragraph = (
+    f"On {day:%A %B %d, %Y}, GO and the TTC behave as two independently scheduled networks that share "
+    f"{pairs.go_stop_id.nunique()} stations. The median coordination index across {len(rated)} TTC route-directions is "
+    f"{rated.coordination_index.median():.2f}, and TTC feeder arrivals land {share_before:.0%} of the time just before a "
+    f"GO departure and {1 - share_before:.0%} just after. Riders reach a TTC vehicle quickest at "
+    + ", ".join(f"{row.go_station} ({row.median_transfer_minutes:.1f} min)" for row in fastest.itertuples())
+    + " and wait longest at "
+    + ", ".join(f"{row.go_station} ({row.median_transfer_minutes:.1f} min)" for row in slowest.itertuples())
+    + f". {timing_counts.get('leaves just before GO arrives', 0)} route-directions consistently leave just before trains arrive"
+    + (f", and observed TTC lateness would break {covered.miss_probability.mean():.0%} of the tightest planned TTC to GO "
+       "connections." if len(covered) else ".")
+)
+print(textwrap.fill(paragraph, 110))
+print()
 
 findings = [
     f"{pairs.go_stop_id.nunique()} of {go_events.stop_id.nunique()} GO rail stations in service on {day:%A %B %d} have TTC stops within {walk_radius_m:.0f} m.",
@@ -722,6 +893,7 @@ summary = {
     "liveLateness": live_status,
     "expectedMissedShare": round(float(covered.miss_probability.mean()), 3) if len(covered) else None,
     "tables": written,
+    "mapLayers": map_layers,
 }
 print(json.dumps(summary))
 
@@ -731,6 +903,32 @@ print(json.dumps(summary))
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# MARKDOWN ********************
+
+# ### What should happen next
+#
+# 1. Retime the departures that leave just before trains arrive. Start with the
+#    17 route-directions flagged in `gold_go_ttc_handoffs`, beginning with the
+#    westbound 939 Finch Express at Kennedy, the northbound 44 Kipling South at
+#    Kipling, and the northbound 102 Markham Rd at Mount Joy. Moving a departure
+#    a few minutes later adds no service hours and shortens every transfer.
+# 2. Plan timed transfers where TTC service is thin. At Mount Joy, Markham, Old
+#    Cummer, Oriole, and Centennial the low-frequency TTC route sets the
+#    handoff, so pulse those routes around GO peak-direction and early-morning
+#    arrivals instead of adding frequency.
+# 3. Protect feeder connections from lateness. At Mount Dennis and the other
+#    stations with the highest feeder risk on the map, prioritize the feeder
+#    routes for transit signal priority and headway management in the GO peak,
+#    and add observed lateness to the minimum transfer time that trip planners
+#    assume.
+# 4. Measure achieved connections, not only planned ones. Configure Metrolinx
+#    GO and UP Express GTFS-realtime so this notebook can include GO punctuality,
+#    which it currently assumes, and compare planned with achieved transfers.
+# 5. Weight by riders and run continuously. Join PRESTO and One Fare transfer
+#    counts to rank stations by the people affected, extend the analysis to
+#    weekends and several weekdays, and schedule this notebook after the daily
+#    GTFS refresh so `GoTtcInterchangeMap` stays current.
 
 # CELL ********************
 
