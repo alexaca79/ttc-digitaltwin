@@ -129,7 +129,8 @@ function tripUpdateEvents(
       const scheduled = scheduleLookup?.getStopTime(
         tripId,
         stop.stopSequence ?? 0,
-        stopId
+        stopId,
+        routeId
       ) ?? null;
       const computedDelay = stopDeviation(stop, scheduled);
       if (computedDelay != null) computedStopDelays.push(computedDelay);

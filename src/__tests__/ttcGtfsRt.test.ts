@@ -105,5 +105,6 @@ describe('TTC GTFS-RT schedule status', () => {
     expect(result.events.find((event) => event.eventType === 'TripUpdate')).toMatchObject({
       delaySeconds: 270,
     });
+    expect(scheduleLookup.getStopTime).toHaveBeenCalledWith('trip-1', 1, 'stop-1', '7');
   });
 });

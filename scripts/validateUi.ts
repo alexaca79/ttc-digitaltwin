@@ -2,8 +2,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { chromium, type Page } from 'playwright-core';
+import { chromium, type Page, type Route } from 'playwright-core';
 import { PNG } from 'pngjs';
+
+import type { StaticNetworkAsset, TransitSnapshot } from '../src/types/transit.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outputDirectory = join(root, 'artifacts');
@@ -47,6 +49,157 @@ function compositedColorCount(buffer: Buffer) {
   return colors.size;
 }
 
+function metricFixture(count = 4, ageSeconds = 0): TransitSnapshot {
+  const observedAt = new Date(Date.now() - ageSeconds * 1000).toISOString();
+  return {
+    source: 'ttc-gtfs-rt',
+    observedAt,
+    vehicles: Array.from({ length: count }, (_, index) => {
+      const deviation = [0, 240, -121, null][index % 4];
+      return {
+        id: `fixture-${index}`,
+        routeId: index % 2 === 0 ? '29' : '504',
+        tripId: `fixture-trip-${index}`,
+        label: `Test vehicle ${index}`,
+        mode: index % 2 === 0 ? 'bus' : 'streetcar',
+        latitude: 43.645 + (index % 20) * 0.003,
+        longitude: -79.43 + (index % 30) * 0.003,
+        bearing: 0,
+        speedKph: 20,
+        scheduleDeviationSeconds: deviation,
+        occupancy: 'unknown',
+        state: deviation === null ? 'unknown' : deviation > 180 ? 'delayed' : deviation < -120 ? 'early' : 'on-time',
+        observedAt,
+      };
+    }),
+    alerts: [{
+      id: 'fixture-alert',
+      severity: 'warning',
+      title: 'Test service alert',
+      description: 'Browser validation fixture, not a live notice.',
+      routeIds: ['29'],
+      updatedAt: observedAt,
+    }],
+  };
+}
+
+async function validateMetricLayout(page: Page, name: string) {
+  const layout = await page.evaluate(() => {
+    const issues: string[] = [];
+    const metrics = Array.from(document.querySelectorAll<HTMLElement>('.network-metric'));
+    for (const metric of metrics) {
+      const bounds = metric.getBoundingClientRect();
+      if (bounds.width === 0 || bounds.height === 0) issues.push(`${metric.ariaLabel}: hidden`);
+      const children = Array.from(metric.children).map((child) => child.getBoundingClientRect());
+      for (const [index, child] of children.entries()) {
+        if (child.left < bounds.left - 1 || child.right > bounds.right + 1 || child.bottom > bounds.bottom + 1) {
+          issues.push(`${metric.ariaLabel}: clipped content`);
+        }
+        for (const sibling of children.slice(index + 1)) {
+          if (Math.min(child.right, sibling.right) - Math.max(child.left, sibling.left) > 1 &&
+              Math.min(child.bottom, sibling.bottom) - Math.max(child.top, sibling.top) > 1) {
+            issues.push(`${metric.ariaLabel}: overlapping content`);
+          }
+        }
+      }
+    }
+    const status = document.querySelector('.source-status')?.getBoundingClientRect();
+    return {
+      issues,
+      count: metrics.length,
+      statusVisible: Boolean(status && status.height > 0 && status.bottom <= innerHeight),
+      width: innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      values: metrics.map((metric) => metric.querySelector('strong')?.textContent),
+    };
+  });
+  assert(layout.count === 4, `${name}: expected four network metrics.`);
+  assert(layout.statusVisible, `${name}: telemetry source status is hidden.`);
+  assert(layout.scrollWidth <= layout.width, `${name}: horizontal overflow detected.`);
+  assert(layout.issues.length === 0, `${name}: ${layout.issues.join(', ')}`);
+  await page.screenshot({ path: join(outputDirectory, `ttc-metrics-${name}.png`) });
+  return layout;
+}
+
+async function validateNetworkMetrics(page: Page) {
+  let fixture = metricFixture();
+  let unavailable = false;
+  let loading = true;
+  const pending: Route[] = [];
+  await page.route(/\/api\/(live|snapshot)(?:\?.*)?$/, async (route) => {
+    if (loading) {
+      pending.push(route);
+      return;
+    }
+    if (unavailable) {
+      await route.fulfill({ status: 503, json: { error: 'Test outage' } });
+      return;
+    }
+    await route.fulfill({ json: fixture });
+  });
+  const summary = page.getByRole('region', { name: 'Network summary' });
+  const values = () => summary.locator('.network-metric > strong').allTextContents();
+  const expectValues = async (expected: string[], name: string) => {
+    const actual = await values();
+    assert(JSON.stringify(actual) === JSON.stringify(expected), `${name}: ${JSON.stringify(actual)}`);
+  };
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
+  await summary.waitFor();
+  await expectValues(['...', '...', '...', '...'], 'loading');
+  await page.screenshot({ path: join(outputDirectory, 'ttc-metrics-loading.png') });
+  loading = false;
+  for (const route of pending) await route.fulfill({ json: fixture });
+  await page.locator('.metric-strip[data-state="connected"]').waitFor();
+  await expectValues(['4', '33%', '1', '1'], 'connected');
+
+  unavailable = true;
+  await page.getByTitle('Refresh feed').click();
+  await page.locator('.metric-strip[data-state="degraded"]').waitFor();
+  await expectValues(['4', '33%', '1', '1'], 'retained snapshot');
+  assert((await summary.textContent())?.includes('Last known fleet'), 'Outage lost last-known provenance.');
+  await page.screenshot({ path: join(outputDirectory, 'ttc-metrics-last-known.png') });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.locator('.metric-strip[data-state="degraded"]').waitFor();
+  await expectValues(['N/A', 'N/A', 'N/A', 'N/A'], 'unavailable');
+
+  unavailable = false;
+  fixture = { ...metricFixture(0), alerts: [] };
+  await page.getByTitle('Refresh feed').click();
+  await page.locator('.metric-strip[data-state="connected"]').waitFor();
+  await expectValues(['0', 'N/A', 'N/A', '0'], 'empty snapshot');
+
+  fixture = metricFixture();
+  fixture.vehicles = fixture.vehicles.map((vehicle) => ({ ...vehicle, scheduleDeviationSeconds: null, state: 'unknown' }));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.locator('.metric-strip[data-state="connected"]').waitFor();
+  await expectValues(['4', 'N/A', 'N/A', '1'], 'missing estimates');
+
+  fixture = metricFixture(4, 300);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.locator('.metric-strip[data-state="stale"]').waitFor();
+  assert((await page.getByRole('status').textContent())?.includes('Last known 5m ago'), 'Stale age is missing.');
+  await page.screenshot({ path: join(outputDirectory, 'ttc-metrics-stale.png') });
+
+  await page.getByTitle('Pause playback').click();
+  await page.locator('.metric-strip[data-state="paused"]').waitFor();
+  assert((await page.getByRole('status').textContent())?.includes('Updates paused'), 'Pause status is missing.');
+
+  fixture = metricFixture(1248);
+  const layouts: Array<Awaited<ReturnType<typeof validateMetricLayout>>> = [];
+  for (const width of [1440, 1024, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: width >= 768 ? 900 : 844 });
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
+    await page.locator('.metric-strip[data-state="connected"]').waitFor();
+    await expectValues(['1,248', '33%', '312', '1'], `viewport ${width}`);
+    layouts.push(await validateMetricLayout(page, String(width)));
+  }
+  fixture = metricFixture();
+  return { states: ['loading', 'connected', 'last-known', 'unavailable', 'empty', 'unknown', 'stale', 'paused'], layouts };
+}
+
 async function deselectFromMap(page: Page, name: string) {
   const mapBounds = await page.locator('.transit-map').boundingBox();
   assert(mapBounds, `${name}: map bounds are unavailable.`);
@@ -75,6 +228,7 @@ async function validateViewport(
   await page.setViewportSize(viewport);
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('main.operations-shell');
+  await page.getByTitle('Fleet map', { exact: true }).click();
   await page.waitForSelector('.transit-map-shell[data-map-ready="true"]', { timeout: 30_000 });
   await page.waitForTimeout(3000);
 
@@ -159,9 +313,10 @@ async function validateViewport(
   assert(metrics.canvas.height >= 400, `${name}: map canvas is too short.`);
   assert(metrics.scrollWidth <= viewport.width, `${name}: horizontal overflow detected.`);
   assert(uniqueCanvasColors > 20, `${name}: composited map appears blank (${uniqueCanvasColors} sampled colors).`);
-  assert(Number(metrics.vehicleCount) > 0, `${name}: no fleet telemetry rendered.`);
+  const vehicleCount = Number(metrics.vehicleCount.replaceAll(',', ''));
+  assert(vehicleCount > 0, `${name}: no fleet telemetry rendered.`);
   assert(
-    metrics.fleetRows === Number(metrics.vehicleCount),
+    metrics.fleetRows === vehicleCount,
     `${name}: fleet panel shows ${metrics.fleetRows} of ${metrics.vehicleCount} tracked vehicles.`
   );
   for (const label of ['Bus', 'Streetcar', 'Subway', 'Stop', 'Delayed', 'Not reported']) {
@@ -186,6 +341,109 @@ async function validateViewport(
   return result;
 }
 
+async function validateSpatialData(page: Page) {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.route(/\/api\/(live|snapshot)(?:\?.*)?$/, (route) =>
+    route.fulfill({ json: { ...metricFixture(0), alerts: [] } })
+  );
+  const response = await page.request.get(`${appUrl}/data/gta-network.json`);
+  assert(response.ok(), 'The real spatial asset could not be loaded.');
+  const network = await response.json() as StaticNetworkAsset;
+  assert(network.routes.every((route) => route.paths?.length), 'Route shape associations are missing.');
+  assert(network.stops.every((stop) => stop.routeIds?.length), 'Stop route associations are missing.');
+  const results: Array<{
+    width: number;
+    view: string;
+    mode: 'all' | 'bus' | 'streetcar' | 'subway' | 'rail';
+    agency?: 'ttc' | 'go' | 'up';
+    focusedRouteId?: string;
+    focusedStops?: number;
+    routes: number;
+    paths: number;
+    stops: number;
+    canvasColors: number;
+  }> = [];
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('radiogroup', { name: 'Route agencies' }).waitFor();
+    assert(await page.getByRole('radio', { name: 'GO Transit', exact: true }).isVisible(), 'GO route choice is not visible on first load.');
+    assert(await page.getByRole('radio', { name: 'UP Express', exact: true }).isVisible(), 'UP route choice is not visible on first load.');
+    for (const view of ['2D', '3D']) {
+      await page.getByRole('combobox', { name: 'Transit agency' }).selectOption('all');
+      await page.locator('.map-view-control').getByRole('button', { name: view, exact: true }).click();
+      const selector = view === '3D' ? '.maplibre-map-shell' : '.transit-map-shell:not(.maplibre-map-shell)';
+      await page.locator(`${selector}[data-map-ready="true"]`).waitFor({ timeout: 45_000 });
+      for (const mode of ['bus', 'streetcar', 'subway', 'rail'] as const) {
+        const routes = network.routes.filter((route) => route.mode === mode);
+        const routeIds = new Set(routes.map((route) => route.id));
+        const stops = network.stops.filter((stop) => stop.routeIds?.some((routeId) => routeIds.has(routeId)));
+        const paths = routes.reduce((count, route) => count + (route.paths?.length ?? 1), 0);
+        await page.getByRole('button', { name: mode, exact: true }).click();
+        await page.waitForFunction(({ selector, routes, paths, stops }) => {
+          const map = document.querySelector<HTMLElement>(selector);
+          return map?.dataset.routeCount === String(routes) &&
+            map.dataset.routePathCount === String(paths) && map.dataset.stopCount === String(stops);
+        }, { selector, routes: routes.length, paths, stops: stops.length });
+        await page.waitForLoadState('networkidle');
+        const canvas = page.locator(`${selector} canvas`).first();
+        await canvas.waitFor();
+        const colors = compositedColorCount(await canvas.screenshot());
+        assert(colors > 20, `${view} ${mode}: map canvas is blank (${colors} colors).`);
+        const overflows = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+        assert(!overflows, `${view} ${mode}: horizontal overflow.`);
+        await page.screenshot({ path: join(outputDirectory, `gta-spatial-${viewport.width}-${view}-${mode}.png`), fullPage: true });
+        results.push({ width: viewport.width, view, mode, routes: routes.length, paths, stops: stops.length, canvasColors: colors });
+      }
+      await page.getByRole('button', { name: 'All modes', exact: true }).click();
+      for (const agency of ['ttc', 'go', 'up'] as const) {
+        const routes = network.routes.filter((route) => route.agency === agency);
+        const routeIds = new Set(routes.map((route) => route.id));
+        const stops = network.stops.filter((stop) => stop.routeIds?.some((routeId) => routeIds.has(routeId)));
+        const paths = routes.reduce((count, route) => count + (route.paths?.length ?? 1), 0);
+        assert(routes.length > 0, `No ${agency} routes were imported.`);
+        await page.getByTitle('Network routes', { exact: true }).click();
+        await page.getByRole('radio', { name: { ttc: 'TTC', go: 'GO Transit', up: 'UP Express' }[agency], exact: true }).check();
+        await page.getByTitle('Network routes', { exact: true }).click();
+        await page.waitForFunction(({ selector, routes, paths, stops }) => {
+          const map = document.querySelector<HTMLElement>(selector);
+          return map?.dataset.routeCount === String(routes) &&
+            map.dataset.routePathCount === String(paths) && map.dataset.stopCount === String(stops);
+        }, { selector, routes: routes.length, paths, stops: stops.length });
+        const feed = network.feeds?.find((candidate) => candidate.agency === agency);
+        assert(feed, `Missing ${agency} feed provenance.`);
+        await page.locator('.network-feed-details summary').click();
+        const download = page.getByRole('link', { name: `Download ${feed.name} GTFS`, exact: true });
+        assert(await download.getAttribute('href') === feed.sourceUrl, `${agency}: wrong feed download link.`);
+        await page.locator('.network-feed-details summary').click();
+        const focused = routes[0];
+        const focusedStops = stops.filter((stop) => stop.routeIds?.includes(focused.id)).length;
+        await page.getByRole('button', { name: `Focus ${feed.name} route ${focused.shortName}: ${focused.longName}`, exact: true }).click();
+        await page.waitForFunction(({ selector, routeId, stopCount }) => {
+          const map = document.querySelector<HTMLElement>(selector);
+          return map?.dataset.focusedRoute === routeId && map.dataset.stopCount === String(stopCount);
+        }, { selector, routeId: focused.id, stopCount: focusedStops });
+        assert(await page.getByRole('region', { name: 'Route details' }).isVisible(), `${agency}: route details are hidden.`);
+        await page.waitForLoadState('networkidle');
+        const colors = compositedColorCount(await page.locator(`${selector} canvas`).first().screenshot());
+        assert(colors > 20, `${view} ${agency}: focused map is blank.`);
+        const layout = await page.evaluate(() => {
+          const controls = document.querySelector('.map-filter-bar')!.getBoundingClientRect();
+          const legend = document.querySelector('.map-legend')!.getBoundingClientRect();
+          return { overflow: document.documentElement.scrollWidth > innerWidth, overlapping: controls.bottom > legend.top + 1 };
+        });
+        assert(!layout.overflow && !layout.overlapping, `${view} ${agency}: overlapping controls or horizontal overflow.`);
+        await page.screenshot({ path: join(outputDirectory, `gta-agency-${viewport.width}-${view}-${agency}.png`), fullPage: true });
+        results.push({ width: viewport.width, view, mode: 'all', agency, focusedRouteId: focused.id, focusedStops, routes: routes.length, paths, stops: stops.length, canvasColors: colors });
+        await page.getByRole('button', { name: 'Clear route selection', exact: true }).click();
+      }
+    }
+  }
+  assert(errors.length === 0, `Spatial browser errors: ${errors.join(' | ')}`);
+  return results;
+}
+
 async function main() {
   mkdirSync(outputDirectory, { recursive: true });
   const browser = await chromium.launch({
@@ -194,8 +452,21 @@ async function main() {
     args: ['--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=swiftshader'],
   });
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext({ locale: 'en-US' });
     const page = await context.newPage();
+    if (process.env.UI_TEST_SPATIAL_ONLY === 'true') {
+      const spatial = await validateSpatialData(page);
+      console.log(JSON.stringify({ fixtureTelemetry: true, officialSpatialData: true, spatial }, null, 2));
+      return;
+    }
+    const networkMetrics = process.env.UI_TEST_FIXTURES === 'true'
+      ? await validateNetworkMetrics(page)
+      : undefined;
+    if (process.env.UI_TEST_METRICS_ONLY === 'true') {
+      assert(networkMetrics, 'Metrics-only validation requires UI_TEST_FIXTURES=true.');
+      console.log(JSON.stringify({ fixtureData: true, networkMetrics }, null, 2));
+      return;
+    }
     const errors: string[] = [];
     const mapResponses: string[] = [];
     const failedRequests: string[] = [];
@@ -228,7 +499,7 @@ async function main() {
       mapResponses.some((response) => response.includes('.pbf')),
       '3D validation did not receive any vector tiles.'
     );
-    console.log(JSON.stringify({ desktop, mobile }, null, 2));
+    console.log(JSON.stringify({ desktop, mobile, networkMetrics }, null, 2));
   } finally {
     await browser.close();
   }

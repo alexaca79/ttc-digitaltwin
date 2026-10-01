@@ -1,0 +1,5 @@
+CurrentFleet()
+| where ObservedAt > ago(10m)
+| extend DelayMinutes = round(ScheduleDeviationSeconds / 60.0, 1),
+    Color = case(State == "delayed", "#da291c", State == "early", "#2e9d4f", State == "on-time", "#f5f5f5", "#86857f")
+| project VehicleLabel, RouteId, Mode, State, DelayMinutes, ObservedAt, Latitude, Longitude, Color

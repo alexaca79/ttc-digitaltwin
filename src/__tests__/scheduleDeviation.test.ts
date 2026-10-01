@@ -30,4 +30,13 @@ describe('GTFS schedule deviation', () => {
     expect(computeScheduleDeviation(predicted, scheduled!)).toBe(-120);
     expect(medianDeviation([270, 300, 240])).toBe(270);
   });
+
+  it('treats a multi-hour gap from a stale timetable as unknown', () => {
+    const scheduled = parseGtfsTime('10:00:00');
+
+    expect(scheduled).not.toBeNull();
+    expect(computeScheduleDeviation(Date.parse('2026-10-01T11:59:00-04:00') / 1000, scheduled!)).toBe(7140);
+    expect(computeScheduleDeviation(Date.parse('2026-10-01T12:01:00-04:00') / 1000, scheduled!)).toBeNull();
+    expect(computeScheduleDeviation(Date.parse('2026-10-01T04:30:00-04:00') / 1000, scheduled!)).toBeNull();
+  });
 });

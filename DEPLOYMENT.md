@@ -1,7 +1,7 @@
 ---
-title: TTC Digital Twin Deployment and Operations Guide
+title: GTA Transit Digital Twin Deployment and Operations Guide
 description: End-to-end deployment, validation, recovery, and data roadmap for the Fabric and Rayfin workload
-ms.date: 2026-08-20
+ms.date: 2026-10-01
 ms.topic: how-to
 ---
 
@@ -12,7 +12,7 @@ ms.topic: how-to
 > [deployment quickstart](DEPLOYMENT-QUICKSTART.md) first. This guide is the
 > reference for detail, failure modes, and recovery.
 
-This guide deploys the TTC Digital Twin from a fresh clone and operates it as a
+This guide deploys the GTA Transit Digital Twin from a fresh clone and operates it as a
 mostly Fabric-contained workload. It covers:
 
 * Microsoft Fabric Real-Time Intelligence items
@@ -26,6 +26,19 @@ The repository is the source of truth for all Fabric definitions, KQL schema,
 Rayfin schema, application code, and publisher code.
 
 ## Platform Boundary
+
+The current GTA app combines TTC, GO Transit, and UP Express static GTFS.
+`npm run gtfs:sync` retains all supplied tables locally and emits
+`public/data/gta-network.json`. The September 28 source snapshot and derived
+network are retained in `TTCSchedule/Files/gta-gtfs/20260928T2059Z/`.
+GO/UP live feeds are not configured; the app's live metrics are TTC-only.
+
+The deployed app currently uses the decoded container-publisher path and
+Eventstream, with the separate native-ingestion schedule disabled. Sections
+below describing an entirely Fabric-native path document the alternative
+configuration, not the current GTA app. Preserve the existing internal resource
+names and IDs when updating branding; a frontend rebrand does not require
+recreating the AppBackend, SQL database, Eventhouse, or lakehouse.
 
 Fabric contains the entire data plane. Nothing outside Fabric is required to
 ingest, store, or serve this workload.
@@ -91,6 +104,8 @@ The deployment script creates or reuses the following names.
 | `TTCNativeIngest` | `fabric/notebook-ingest/` |
 | `TTCLiveOperations` | `fabric/dashboard/` |
 | `TTCFeedDecoder` | `fabric/notebook/` |
+| `GoTtcInterchange` | `fabric/notebook-interchange/` |
+| `GoTtcInterchangeMap` | `fabric/map-interchange/` |
 | Rayfin AppBackend | `rayfin/rayfin.yml` |
 | Rayfin managed SQL | `rayfin/data/` |
 
@@ -98,7 +113,9 @@ The deployment is idempotent by item name. Existing Eventstream definitions
 are compared before update. The KQL schema uses create-or-merge and
 create-or-alter operations. Notebook parameter defaults are templated with the
 resolved Lakehouse and Eventhouse identifiers at deploy time, so scheduled runs
-need no arguments.
+need no arguments. The interchange map is templated the same way with the
+workspace, Lakehouse, and KQL database IDs; its layers stay empty until
+`GoTtcInterchange` has run once.
 
 ## Static Reference Data
 
@@ -1157,6 +1174,13 @@ username, and the secret reference. `/api/health` must report
 Run `npm run gtfs:sync` before building the image. Confirm that both
 `stop_times.txt` and `schedule-offsets.json` are present in the container.
 
+When TTC republishes its GTFS, the timetable bundled in the image goes stale
+and reused trip IDs point at unrelated trips. The publisher rejects matches
+whose scheduled route differs from the realtime route, and gaps over two
+hours, so estimate coverage drops instead of reporting false delays. Run
+`npm run gtfs:sync`, rebuild the image, and update the Container App to
+restore coverage.
+
 ### Eventstream rejects a publish request
 
 The publisher intentionally batches below 800 KB. Do not increase the target
@@ -1168,6 +1192,12 @@ service-alert payload.
 Confirm that Eventstream is running, the Custom Endpoint source is connected,
 and processed ingestion destinations point to `TTCOperations`. Compare the
 publisher health timestamp with Eventstream input metrics.
+
+Pausing the Fabric capacity pauses the Eventhouse destinations, and they stay
+paused after the capacity resumes while the publisher keeps publishing. Check
+the destination status in the Eventstream topology and resume each paused
+destination with `startType` set to `Now` to restore live rows without
+replaying the backlog.
 
 ### `/api/live` returns HTTP 503
 

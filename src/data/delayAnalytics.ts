@@ -2,6 +2,49 @@ import type { TransitMode, VehicleTelemetry } from '@/types/transit';
 
 export type DelayComparisonMode = Extract<TransitMode, 'bus' | 'streetcar'>;
 
+export interface NetworkOperationsSummary {
+  trackedVehicles: number;
+  scheduledVehicles: number;
+  onTimeVehicles: number;
+  delayedVehicles: number;
+  earlyVehicles: number;
+  onTimePercent: number | null;
+  scheduleCoveragePercent: number | null;
+}
+
+export function summarizeNetworkOperations(
+  vehicles: VehicleTelemetry[]
+): NetworkOperationsSummary {
+  let scheduledVehicles = 0;
+  let onTimeVehicles = 0;
+  let delayedVehicles = 0;
+  let earlyVehicles = 0;
+
+  for (const vehicle of vehicles) {
+    const deviation = vehicle.scheduleDeviationSeconds;
+    if (deviation == null || !Number.isFinite(deviation)) continue;
+
+    scheduledVehicles += 1;
+    if (deviation > 180) delayedVehicles += 1;
+    else if (deviation < -120) earlyVehicles += 1;
+    else onTimeVehicles += 1;
+  }
+
+  return {
+    trackedVehicles: vehicles.length,
+    scheduledVehicles,
+    onTimeVehicles,
+    delayedVehicles,
+    earlyVehicles,
+    onTimePercent: scheduledVehicles > 0
+      ? Math.round((onTimeVehicles / scheduledVehicles) * 100)
+      : null,
+    scheduleCoveragePercent: vehicles.length > 0
+      ? Math.round((scheduledVehicles / vehicles.length) * 100)
+      : null,
+  };
+}
+
 export interface RouteDelaySummary {
   routeId: string;
   mode: DelayComparisonMode;

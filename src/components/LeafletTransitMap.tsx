@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as L from 'leaflet';
 import type { CircleMarker, LayerGroup, Map as LeafletMap } from 'leaflet';
 
+import { isTrunkRoute, routesInPaintOrder } from '@/components/routePaintOrder';
 import type { TransitRoute, TransitStop, VehicleTelemetry } from '@/types/transit';
 
 import 'leaflet/dist/leaflet.css';
@@ -11,6 +12,7 @@ interface TransitMapProps {
   visibleRoutes: TransitRoute[];
   stops: TransitStop[];
   selectedVehicleId: string | null;
+  focusedRouteId?: string | null;
   onVehicleSelect: (vehicleId: string | null) => void;
 }
 
@@ -25,11 +27,17 @@ function vehicleColor(state: VehicleTelemetry['state']) {
   return '#151515';
 }
 
+function routeWeights(focused: boolean, trunk: boolean) {
+  if (!focused) return { casing: 3, line: 1.5 };
+  return trunk ? { casing: 10, line: 6 } : { casing: 7, line: 4 };
+}
+
 export function TransitMap({
   vehicles,
   visibleRoutes,
   stops,
   selectedVehicleId,
+  focusedRouteId,
   onVehicleSelect,
 }: TransitMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -52,9 +60,9 @@ export function TransitMap({
     const vehicleMarkers = vehicleMarkersRef.current;
 
     const map = L.map(containerRef.current, {
-      center: [43.674, -79.392],
-      zoom: 11,
-      minZoom: 9,
+      center: [43.74, -79.55],
+      zoom: 9,
+      minZoom: 7,
       maxZoom: 19,
       zoomControl: false,
       attributionControl: true,
@@ -77,7 +85,7 @@ export function TransitMap({
     let tileErrorCount = 0;
     const tiles = L.tileLayer(tileUrl, {
       attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · TTC Open Data',
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · TTC / Metrolinx GTFS',
       maxZoom: 19,
       updateWhenIdle: true,
       keepBuffer: 2,
@@ -172,16 +180,18 @@ export function TransitMap({
     if (!routes) return;
 
     routes.clearLayers();
-    for (const route of visibleRoutes) {
-      if (route.path.length < 2) continue;
-      const points = route.path.map(([longitude, latitude]) =>
-        L.latLng(latitude, longitude)
-      );
+    for (const route of routesInPaintOrder(visibleRoutes, focusedRouteId)) {
+      const focused = !focusedRouteId || route.id === focusedRouteId;
+      const weights = routeWeights(focused, isTrunkRoute(route));
+      const points = (route.paths ?? [route.path])
+        .filter((path) => path.length >= 2)
+        .map((path) => path.map(([longitude, latitude]) => L.latLng(latitude, longitude)));
+      if (points.length === 0) continue;
       L.polyline(points, {
         pane: 'ttc-routes-pane',
         color: '#ffffff',
-        weight: 7,
-        opacity: 0.82,
+        weight: weights.casing,
+        opacity: focused ? 0.82 : 0.15,
         lineCap: 'round',
         lineJoin: 'round',
         interactive: false,
@@ -189,14 +199,14 @@ export function TransitMap({
       L.polyline(points, {
         pane: 'ttc-routes-pane',
         color: route.color,
-        weight: 4,
-        opacity: 0.94,
+        weight: weights.line,
+        opacity: focused ? 0.94 : 0.2,
         lineCap: 'round',
         lineJoin: 'round',
         interactive: false,
       }).addTo(routes);
     }
-  }, [visibleRoutes]);
+  }, [focusedRouteId, visibleRoutes]);
 
   useEffect(() => {
     const vehicleLayer = vehicleLayerRef.current;
@@ -244,6 +254,17 @@ export function TransitMap({
   }, [selectedVehicleId, vehicles]);
 
   useEffect(() => {
+    const route = visibleRoutes.find((candidate) => candidate.id === focusedRouteId);
+    const map = mapRef.current;
+    if (!route || !map) return;
+    const bounds = L.latLngBounds([]);
+    for (const path of route.paths ?? [route.path]) {
+      for (const [longitude, latitude] of path) bounds.extend([latitude, longitude]);
+    }
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [45, 100], maxZoom: 13, animate: false });
+  }, [focusedRouteId, visibleRoutes]);
+
+  useEffect(() => {
     const vehicle = vehicles.find(
       (candidate) => candidate.id === selectedVehicleId
     );
@@ -261,12 +282,16 @@ export function TransitMap({
     <div
       className="transit-map-shell"
       data-map-ready={mapReady}
+      data-route-count={visibleRoutes.length}
+      data-route-path-count={visibleRoutes.reduce((count, route) => count + (route.paths?.length ?? 1), 0)}
+      data-stop-count={stops.length}
+      data-focused-route={focusedRouteId ?? ''}
       aria-busy={!mapReady}
     >
       <div
         ref={containerRef}
         className="transit-map"
-        aria-label="Live TTC operations map"
+        aria-label="GTA transit operations map"
       />
       {mapWarning && <div className="map-warning">{mapWarning}</div>}
     </div>

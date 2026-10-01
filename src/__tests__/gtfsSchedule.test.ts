@@ -49,4 +49,27 @@ describe('static GTFS schedule lookup', () => {
     });
     lookup!.close();
   });
+
+  it('rejects a trip ID that a newer timetable reused on another route', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ttc-schedule-'));
+    temporaryDirectories.push(directory);
+    writeFileSync(
+      join(directory, 'stop_times.txt'),
+      [
+        'trip_id,arrival_time,departure_time,stop_id,stop_sequence,stop_headsign',
+        'trip-a,10:00:00,10:00:30,stop-1,1,Outbound',
+        'trip-a,10:05:00,10:05:30,stop-2,2,Outbound',
+        '',
+      ].join('\n'),
+      'utf8'
+    );
+    writeFileSync(join(directory, 'trips.txt'), 'route_id,service_id,trip_id\n71,1,trip-a\n', 'utf8');
+    const lookup = await openGtfsScheduleLookup(directory);
+    await lookup!.prefetch(['trip-a']);
+
+    expect(lookup!.getStopTime('trip-a', 2, 'realtime-stop-id', '71')).toMatchObject({ stopId: 'stop-2' });
+    expect(lookup!.getStopTime('trip-a', 2, 'realtime-stop-id', '504')).toBeNull();
+    expect(lookup!.getStopTime('trip-a', 2, 'realtime-stop-id')).toMatchObject({ stopId: 'stop-2' });
+    lookup!.close();
+  });
 });

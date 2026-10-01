@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   summarizeLineOperations,
+  summarizeNetworkOperations,
   summarizeRouteDelays,
 } from '@/data/delayAnalytics';
 import type { TransitMode, VehicleTelemetry } from '@/types/transit';
@@ -34,6 +35,67 @@ function vehicle(
     observedAt: '2026-08-14T00:00:00.000Z',
   };
 }
+
+describe('summarizeNetworkOperations', () => {
+  it('uses only measured schedules as the on-time denominator', () => {
+    expect(summarizeNetworkOperations([
+      vehicle('29', 'bus', 600),
+      vehicle('504', 'streetcar', 0),
+      vehicle('1', 'subway', -240),
+      vehicle('63', 'bus', null),
+    ])).toEqual({
+      trackedVehicles: 4,
+      scheduledVehicles: 3,
+      onTimeVehicles: 1,
+      delayedVehicles: 1,
+      earlyVehicles: 1,
+      onTimePercent: 33,
+      scheduleCoveragePercent: 75,
+    });
+  });
+
+  it('derives state from deviation using the feed thresholds, including boundaries', () => {
+    const vehicles = [-121, -120, 0, 180, 181].map((deviation) => ({
+      ...vehicle('29', 'bus', deviation),
+      state: 'unknown' as const,
+    }));
+
+    expect(summarizeNetworkOperations(vehicles)).toMatchObject({
+      scheduledVehicles: 5,
+      onTimeVehicles: 3,
+      delayedVehicles: 1,
+      earlyVehicles: 1,
+      onTimePercent: 60,
+      scheduleCoveragePercent: 100,
+    });
+  });
+
+  it('does not count missing or non-finite estimates as measured schedules', () => {
+    expect(summarizeNetworkOperations(
+      [null, NaN, Infinity, -Infinity].map((delay) => vehicle('29', 'bus', delay))
+    )).toMatchObject({
+      trackedVehicles: 4,
+      scheduledVehicles: 0,
+      onTimeVehicles: 0,
+      delayedVehicles: 0,
+      earlyVehicles: 0,
+      onTimePercent: null,
+      scheduleCoveragePercent: 0,
+    });
+  });
+
+  it('keeps an empty fleet distinct from zero-percent schedule performance', () => {
+    expect(summarizeNetworkOperations([])).toEqual({
+      trackedVehicles: 0,
+      scheduledVehicles: 0,
+      onTimeVehicles: 0,
+      delayedVehicles: 0,
+      earlyVehicles: 0,
+      onTimePercent: null,
+      scheduleCoveragePercent: null,
+    });
+  });
+});
 
 describe('summarizeRouteDelays', () => {
   it('ranks routes by average positive delay across tracked vehicles', () => {

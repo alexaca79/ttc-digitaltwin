@@ -1,0 +1,230 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/map/definition/2.0.0/schema.json",
+  "basemap": {
+    "options": {
+      "center": [-79.42, 43.71],
+      "zoom": 10.4,
+      "pitch": 0,
+      "bearing": 0,
+      "style": "grayscale_dark",
+      "showLabels": true
+    },
+    "controls": {
+      "zoom": true,
+      "pitch": true,
+      "compass": true,
+      "scale": true,
+      "traffic": false,
+      "style": true
+    },
+    "theme": "default"
+  },
+  "dataSources": [
+    {
+      "itemType": "Lakehouse",
+      "workspaceId": "{{WORKSPACE_ID}}",
+      "itemId": "{{LAKEHOUSE_ID}}"
+    },
+    {
+      "itemType": "KqlDatabase",
+      "workspaceId": "{{WORKSPACE_ID}}",
+      "itemId": "{{KQL_DATABASE_ID}}"
+    }
+  ],
+  "iconSources": [],
+  "layerSources": [
+    {
+      "id": "56a163e8-fdfd-4d62-a81c-53fa2b4d1b81",
+      "name": "go-rail-lines",
+      "type": "geojson",
+      "itemId": "{{LAKEHOUSE_ID}}",
+      "relativePath": "Files/maps/go-ttc-interchange/go-rail-lines.geojson",
+      "refreshIntervalMs": 0
+    },
+    {
+      "id": "b2668891-c141-4a4c-9fad-357f2544880e",
+      "name": "ttc-rapid-transit",
+      "type": "geojson",
+      "itemId": "{{LAKEHOUSE_ID}}",
+      "relativePath": "Files/maps/go-ttc-interchange/ttc-rapid-transit.geojson",
+      "refreshIntervalMs": 0
+    },
+    {
+      "id": "1c70b4c0-2d5a-4bc9-8811-6558e93cd6fd",
+      "name": "interchange-links",
+      "type": "geojson",
+      "itemId": "{{LAKEHOUSE_ID}}",
+      "relativePath": "Files/maps/go-ttc-interchange/interchange-links.geojson",
+      "refreshIntervalMs": 0
+    },
+    {
+      "id": "791fd463-0d25-435c-9060-b2bce4d61022",
+      "name": "interchanges",
+      "type": "geojson",
+      "itemId": "{{LAKEHOUSE_ID}}",
+      "relativePath": "Files/maps/go-ttc-interchange/interchanges.geojson",
+      "refreshIntervalMs": 0
+    },
+    {
+      "id": "cb2299a2-db03-4b0a-82bc-00946c24644a",
+      "name": "live-ttc-vehicles",
+      "type": "kusto",
+      "options": {
+        "cluster": false
+      },
+      "itemId": "{{KQL_DATABASE_ID}}",
+      "refreshIntervalMs": 60000
+    }
+  ],
+  "layerSettings": [
+    {
+      "id": "4a79f0c9-a5b1-4d32-a8cd-ef6da3086f11",
+      "name": "GO rail lines",
+      "sourceId": "56a163e8-fdfd-4d62-a81c-53fa2b4d1b81",
+      "options": {
+        "type": "vector",
+        "visible": true,
+        "color": "#00853f",
+        "enablePopups": true,
+        "lineOptions": {
+          "strokeColor": ["get", "color"],
+          "strokeWidth": 4,
+          "strokeOpacity": 0.9
+        },
+        "tooltipKeys": ["agency", "route", "name"]
+      }
+    },
+    {
+      "id": "cd51a6a0-0739-4d9c-a94e-9b8b55c303c8",
+      "name": "TTC subway and LRT",
+      "sourceId": "b2668891-c141-4a4c-9fad-357f2544880e",
+      "options": {
+        "type": "vector",
+        "visible": true,
+        "color": "#da291c",
+        "enablePopups": true,
+        "lineOptions": {
+          "strokeColor": ["get", "color"],
+          "strokeWidth": 5,
+          "strokeOpacity": 0.95
+        },
+        "tooltipKeys": ["agency", "route", "name"]
+      }
+    },
+    {
+      "id": "faa8eab2-f802-42a1-b580-7232bd8ef77b",
+      "name": "Live TTC vehicles",
+      "sourceId": "cb2299a2-db03-4b0a-82bc-00946c24644a",
+      "options": {
+        "type": "vector",
+        "visible": true,
+        "color": "#f5f5f5",
+        "enablePopups": true,
+        "pointLayerType": "bubble",
+        "bubbleOptions": {
+          "color": ["get", "Color"],
+          "sizeType": "fixed",
+          "fixedSize": 3,
+          "strokeColor": "#202124",
+          "strokeWidth": 1,
+          "opacity": 0.85
+        },
+        "tooltipKeys": ["VehicleLabel", "RouteId", "Mode", "State", "DelayMinutes", "ObservedAt"]
+      },
+      "latitudeColumnName": "Latitude",
+      "longitudeColumnName": "Longitude"
+    },
+    {
+      "id": "f091961d-2f77-40a0-b638-a31f73c8677b",
+      "name": "GO to TTC transfer links",
+      "sourceId": "1c70b4c0-2d5a-4bc9-8811-6558e93cd6fd",
+      "options": {
+        "type": "vector",
+        "visible": true,
+        "minZoom": 12,
+        "color": "#9aa0a6",
+        "enablePopups": true,
+        "lineOptions": {
+          "strokeColor": ["get", "color"],
+          "strokeWidth": 4,
+          "strokeOpacity": 0.95
+        },
+        "tooltipKeys": [
+          "station",
+          "route",
+          "direction",
+          "ttc_stop",
+          "timing",
+          "mean_wait_minutes",
+          "random_wait_minutes",
+          "coordination_index",
+          "p_value",
+          "walk_minutes"
+        ]
+      }
+    },
+    {
+      "id": "9b06960a-91fb-408d-9420-e15f2ff972e1",
+      "name": "TTC lateness risk to GO connections",
+      "sourceId": "791fd463-0d25-435c-9060-b2bce4d61022",
+      "options": {
+        "type": "vector",
+        "visible": true,
+        "color": "#da291c",
+        "pointLayerType": "bubble",
+        "bubbleOptions": {
+          "color": "#da291c",
+          "sizeType": "data-driven",
+          "sizeProperty": "feeder_risk_pct",
+          "strokeColor": "#da291c",
+          "strokeWidth": 1,
+          "opacity": 0.3
+        },
+        "tooltipKeys": ["station", "feeder_risk_pct", "feeder_connections"]
+      }
+    },
+    {
+      "id": "e818dc2b-4dad-4c73-8455-155bce293d31",
+      "name": "GO to TTC handoff time",
+      "sourceId": "791fd463-0d25-435c-9060-b2bce4d61022",
+      "options": {
+        "type": "vector",
+        "visible": true,
+        "color": "#2e9d4f",
+        "enablePopups": true,
+        "pointLayerType": "bubble",
+        "bubbleOptions": {
+          "color": ["get", "handoff_color"],
+          "sizeType": "fixed",
+          "fixedSize": 9,
+          "strokeColor": "#ffffff",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        "dataLabelOptions": {
+          "enabled": true,
+          "color": "#ffffff",
+          "size": 12,
+          "textStrokeColor": "#202124",
+          "textStrokeWidth": 2,
+          "allowOverlap": false
+        },
+        "dataLabelKeys": ["label"],
+        "tooltipKeys": [
+          "station",
+          "median_transfer_minutes",
+          "p90_transfer_minutes",
+          "handoff_band",
+          "go_arrivals",
+          "ttc_route_directions",
+          "timed_routes",
+          "mistimed_routes",
+          "independent_routes",
+          "feeder_risk_pct",
+          "rapid_transit",
+          "service_date"
+        ]
+      }
+    }
+  ]
+}
