@@ -89,6 +89,7 @@ and stop sequence and wraps the difference into plus or minus twelve hours.
 | `TTCTelemetry` | Eventstream | Optional Custom Endpoint path |
 | `TTCFeedDecoder` | Notebook | Optional Eventstream decode path |
 | `GoTtcInterchange` | Notebook | GO and TTC interchange connection analysis |
+| `GoTtcInterchangeMap` | Map | Interchange analysis layers with live TTC vehicles |
 
 ## Dashboards
 
@@ -233,6 +234,27 @@ and `gold_go_ttc_feeder_risk` in the `TTCSchedule` lakehouse. Each row carries
 its service date and GTFS snapshot. Connections are planned, not observed:
 GO real-time data is not configured, so GO punctuality is not modelled.
 
+The notebook opens its findings with a summary paragraph and closes with
+recommended next steps: retime the departures that leave just before trains
+arrive, pulse thin TTC routes around GO arrivals, protect the feeder routes
+most exposed to lateness, enable GO real-time data, and weight stations by
+PRESTO transfer volumes.
+
+### Interchange map
+
+`GoTtcInterchangeMap` is a Fabric Maps item that shows the analysis on a dark
+basemap of Toronto. Each run of the notebook rewrites its GeoJSON layers in
+`Files/maps/go-ttc-interchange/`, so the map always reflects the latest run.
+
+| Layer | Source | Shows |
+| --- | --- | --- |
+| GO rail lines | Lakehouse GeoJSON | GO corridors in their published colours |
+| TTC subway and LRT | Lakehouse GeoJSON | Lines 1, 2, 4, 5, and 6 |
+| Live TTC vehicles | `TTCOperations` KQL, refreshed every minute | Current vehicles coloured by on time, early, delayed, or not reported |
+| GO to TTC transfer links | Lakehouse GeoJSON, from zoom 12 | Walk to each TTC route-direction, coloured by timing |
+| TTC lateness risk to GO connections | Lakehouse GeoJSON | Halo sized by the share of feeder connections that lateness breaks |
+| GO to TTC handoff time | Lakehouse GeoJSON | Interchanges coloured by median minutes from train to TTC vehicle |
+
 ## Ingestion
 
 The application deployment uses the continuously running publisher and the
@@ -276,6 +298,7 @@ fabric/notebook-bronze/  Static GTFS landing
 fabric/notebook-silver/  Typing and cleaning
 fabric/notebook-gold/    Schedule lookup
 fabric/notebook-interchange/  GO and TTC interchange analysis
+fabric/map-interchange/  Fabric map over the interchange analysis
 fabric/eventstream/      Optional Custom Endpoint path
 scripts/                 Deployment and validation tooling
 ingest/                  Publisher used by the optional container path

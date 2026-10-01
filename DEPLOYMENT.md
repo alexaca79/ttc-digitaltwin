@@ -105,6 +105,7 @@ The deployment script creates or reuses the following names.
 | `TTCLiveOperations` | `fabric/dashboard/` |
 | `TTCFeedDecoder` | `fabric/notebook/` |
 | `GoTtcInterchange` | `fabric/notebook-interchange/` |
+| `GoTtcInterchangeMap` | `fabric/map-interchange/` |
 | Rayfin AppBackend | `rayfin/rayfin.yml` |
 | Rayfin managed SQL | `rayfin/data/` |
 
@@ -112,7 +113,9 @@ The deployment is idempotent by item name. Existing Eventstream definitions
 are compared before update. The KQL schema uses create-or-merge and
 create-or-alter operations. Notebook parameter defaults are templated with the
 resolved Lakehouse and Eventhouse identifiers at deploy time, so scheduled runs
-need no arguments.
+need no arguments. The interchange map is templated the same way with the
+workspace, Lakehouse, and KQL database IDs; its layers stay empty until
+`GoTtcInterchange` has run once.
 
 ## Static Reference Data
 
