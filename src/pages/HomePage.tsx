@@ -19,9 +19,11 @@ import {
 } from 'lucide-react';
 
 import { OperatorLog } from '@/components/OperatorLog';
+import { NetworkRoutes } from '@/components/NetworkRoutes';
 import { TransitMap } from '@/components/LeafletTransitMap';
 import {
   summarizeLineOperations,
+  summarizeNetworkOperations,
   summarizeRouteDelays,
   type DelayComparisonMode,
   type LineOperationsSummary,
@@ -32,6 +34,7 @@ import { useAuth } from '@/hooks/AuthContext';
 import { useStaticNetwork } from '@/hooks/useStaticNetwork';
 import { useTransitFeed } from '@/hooks/useTransitFeed';
 import type {
+  TransitAgency,
   TransitMode,
   VehicleState,
   VehicleTelemetry,
@@ -39,9 +42,12 @@ import type {
 
 import './HomePage.css';
 
-type Panel = 'fleet' | 'alerts' | 'notes';
+type Panel = 'fleet' | 'network' | 'alerts' | 'notes';
 type ModeFilter = 'all' | TransitMode;
+type AgencyFilter = 'all' | TransitAgency;
 type MapView = '2d' | '3d';
+
+const agencyNames: Record<TransitAgency, string> = { ttc: 'TTC', go: 'GO Transit', up: 'UP Express' };
 
 const MapLibreTransitMap = lazy(() =>
   import('@/components/MapLibreTransitMap').then((module) => ({
@@ -53,6 +59,7 @@ const modeIcons = {
   bus: BusFront,
   streetcar: TramFront,
   subway: TrainFront,
+  rail: TrainFront,
 };
 
 const lineStateOrder: VehicleState[] = [
@@ -341,37 +348,63 @@ export function HomePage() {
   const {
     snapshot,
     connectionState,
+    hasSnapshot,
+    observationAgeSeconds,
+    isStale,
+    refreshing,
     paused,
     error,
     liveConfigured,
     setPaused,
     refresh,
   } = useTransitFeed();
-  const { routes: networkRoutes, asset: staticNetwork } = useStaticNetwork();
-  const [activePanel, setActivePanel] = useState<Panel>('fleet');
+  const { routes: networkRoutes, asset: staticNetwork, error: networkError } = useStaticNetwork();
+  const [activePanel, setActivePanel] = useState<Panel>('network');
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
+  const [agencyFilter, setAgencyFilter] = useState<AgencyFilter>('all');
+  const [focusedRouteId, setFocusedRouteId] = useState<string | null>(null);
   const [mapView, setMapView] = useState<MapView>('2d');
   const [mapNotice, setMapNotice] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 
+  function selectAgency(agency: AgencyFilter) {
+    setAgencyFilter(agency);
+    setModeFilter('all');
+    setFocusedRouteId(null);
+    setSelectedVehicleId(null);
+    setActivePanel('network');
+  }
+
   const visibleRoutes = useMemo(
     () => networkRoutes.filter((route) =>
-      (modeFilter === 'all' || route.mode === modeFilter)
+      (modeFilter === 'all' || route.mode === modeFilter) &&
+      (agencyFilter === 'all' || (route.agency ?? 'ttc') === agencyFilter)
     ),
-    [modeFilter, networkRoutes]
+    [agencyFilter, modeFilter, networkRoutes]
   );
+  const focusedRoute = visibleRoutes.find((route) => route.id === focusedRouteId) ?? null;
+  const visibleStops = useMemo(() => {
+    const routeIds = new Set(visibleRoutes.map((route) => route.id));
+    return (staticNetwork?.stops ?? []).filter((stop) =>
+      stop.routeIds?.some((routeId) => routeIds.has(routeId))
+    );
+  }, [staticNetwork, visibleRoutes]);
+  const mapStops = focusedRoute
+    ? visibleStops.filter((stop) => stop.routeIds?.includes(focusedRoute.id))
+    : visibleStops;
   const visibleVehicles = useMemo(
     () => snapshot.vehicles.filter((vehicle) =>
       (modeFilter === 'all' || vehicle.mode === modeFilter) &&
+      (agencyFilter === 'all' || (vehicle.agency ?? 'ttc') === agencyFilter) &&
       (search.trim() === '' ||
         vehicle.label.toLowerCase().includes(search.toLowerCase()) ||
         vehicle.id.toLowerCase().includes(search.toLowerCase()))
     ),
-    [modeFilter, search, snapshot.vehicles]
+    [agencyFilter, modeFilter, search, snapshot.vehicles]
   );
   const selectedVehicle =
-    snapshot.vehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null;
+    visibleVehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null;
   const selectedLineSummary = selectedVehicle
     ? summarizeLineOperations(
         snapshot.vehicles,
@@ -395,26 +428,42 @@ export function HomePage() {
     : null;
   const vehiclesWithSchedule = snapshot.vehicles.filter(
     (vehicle): vehicle is VehicleTelemetry & { scheduleDeviationSeconds: number } =>
-      vehicle.scheduleDeviationSeconds != null
+      vehicle.scheduleDeviationSeconds != null && Number.isFinite(vehicle.scheduleDeviationSeconds)
   );
-  const onTimeVehicles = vehiclesWithSchedule.filter(
-    (vehicle) => vehicle.state === 'on-time'
-  ).length;
-  const delayedVehicles = vehiclesWithSchedule.filter(
-    (vehicle) => vehicle.state === 'delayed'
-  ).length;
-  const onTimePercent = vehiclesWithSchedule.length
-    ? Math.round((onTimeVehicles / vehiclesWithSchedule.length) * 100)
-    : null;
-  const scheduleCoveragePercent = snapshot.vehicles.length
-    ? Math.round((vehiclesWithSchedule.length / snapshot.vehicles.length) * 100)
-    : 0;
+  const metrics = useMemo(() => summarizeNetworkOperations(snapshot.vehicles), [snapshot.vehicles]);
+  const unavailableValue = connectionState === 'connecting' ? '...' : 'N/A';
+  const unavailableDetail = connectionState === 'connecting' ? 'Awaiting telemetry' : 'Feed unavailable';
+  const lastKnown = hasSnapshot && (paused || isStale || Boolean(error));
+  const sourceLabel = paused
+    ? 'Updates paused'
+    : connectionState === 'connecting'
+      ? 'Connecting to live feed'
+      : connectionState === 'connected'
+        ? 'TTC GTFS-RT live'
+        : connectionState === 'stale'
+          ? 'Live data stale'
+          : connectionState === 'degraded'
+            ? hasSnapshot ? 'Live feed degraded' : 'Live feed unavailable'
+            : 'Simulation mode';
+  const observationAge = observationAgeSeconds == null
+    ? ''
+    : observationAgeSeconds < 60
+      ? `${observationAgeSeconds}s ago`
+      : observationAgeSeconds < 3600
+        ? `${Math.floor(observationAgeSeconds / 60)}m ago`
+        : `${Math.floor(observationAgeSeconds / 3600)}h ago`;
+  const sourceDetail = !liveConfigured
+    ? 'Simulated data, not live'
+    : !hasSnapshot
+      ? 'No live observations received'
+      : `${lastKnown ? 'Last known' : 'Observed'} ${observationAge} | TTC GTFS-RT`;
   return (
     <main className="operations-shell">
       <aside className="tool-rail" aria-label="Workspace tools">
-        <div className="ttc-mark" aria-label="TTC Digital Twin"><span>TTC</span></div>
+        <div className="ttc-mark" aria-label="GTA Transit Digital Twin"><span>GTA</span></div>
         <nav>
           <button className={activePanel === 'fleet' ? 'active' : ''} onClick={() => setActivePanel('fleet')} title="Fleet map"><Map size={20} /></button>
+          <button className={activePanel === 'network' ? 'active' : ''} onClick={() => setActivePanel('network')} title="Network routes"><RouteIcon size={20} /></button>
           <button className={activePanel === 'alerts' ? 'active' : ''} onClick={() => setActivePanel('alerts')} title="Service alerts">
             <BellRing size={20} />
             {snapshot.alerts.length > 0 && <span className="rail-count">{snapshot.alerts.length}</span>}
@@ -430,18 +479,22 @@ export function HomePage() {
         <header className="topbar">
           <div className="product-title">
             <span className="eyebrow">Operations control</span>
-            <h1>Toronto transit digital twin</h1>
+            <h1>GTA transit digital twin</h1>
           </div>
-          <div className="source-status">
-            <span className={`status-dot ${connectionState}`} />
+          <div className="source-status" id="network-data-status" role="status">
+            <span className={`status-dot ${paused ? 'paused' : connectionState}`} aria-hidden="true" />
             <div>
-              <strong>{connectionState === 'connected' ? 'GTFS-RT live' : connectionState === 'degraded' ? 'Live feed degraded' : 'Simulation mode'}</strong>
-              <small>{liveConfigured ? 'TTC BusTime + static GTFS' : 'Deterministic open-data model'}</small>
+              <strong>{sourceLabel}</strong>
+              <small>{sourceDetail}</small>
             </div>
           </div>
           <div className="observation-time">
-            <Clock3 size={15} />
-            <time>{new Date(snapshot.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
+            <Clock3 size={15} aria-hidden="true" />
+            {hasSnapshot ? (
+              <time dateTime={snapshot.observedAt} title={new Date(snapshot.observedAt).toLocaleString()}>
+                {new Date(snapshot.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </time>
+            ) : <span>No observation</span>}
           </div>
           <div className="operator-identity">
             <span>{user?.name ?? 'Operator'}</span>
@@ -449,22 +502,49 @@ export function HomePage() {
           </div>
         </header>
 
-        <div className="metric-strip" aria-label="Network summary">
-          <div><span>Tracked vehicles</span><strong>{snapshot.vehicles.length}</strong><Radio size={15} /></div>
-          <div><span>On schedule</span><strong>{onTimePercent == null ? 'N/A' : `${onTimePercent}%`}</strong><small>{onTimePercent == null ? 'Estimate unavailable' : `${onTimeVehicles} of ${vehiclesWithSchedule.length} estimated`}</small></div>
-          <div className={delayedVehicles > 0 ? 'attention' : ''}><span>Delayed</span><strong>{onTimePercent == null ? 'N/A' : delayedVehicles}</strong><small>{onTimePercent == null ? 'Estimate unavailable' : `> 3 min · ${scheduleCoveragePercent}% coverage`}</small></div>
-          <div><span>Active alerts</span><strong>{snapshot.alerts.length}</strong><TriangleAlert size={15} /></div>
-          <div className="scope-note"><Boxes size={16} /><p><strong>Macro operations twin</strong><span>{staticNetwork ? `${staticNetwork.statistics.routes} GTFS routes · ${staticNetwork.statistics.stops} stops` : 'No asset-health or tunnel claims'}</span></p></div>
-        </div>
+        <section
+          className="metric-strip"
+          aria-label="Network summary"
+          aria-describedby="network-data-status"
+          aria-busy={connectionState === 'connecting'}
+          data-state={paused ? 'paused' : connectionState}
+        >
+          <div className="network-metric" role="group" aria-label="Tracked vehicles">
+            <span>Tracked vehicles</span>
+            <strong>{hasSnapshot ? metrics.trackedVehicles.toLocaleString() : unavailableValue}</strong>
+            <Radio size={15} aria-hidden="true" />
+            <small>{!hasSnapshot ? unavailableDetail : !liveConfigured ? 'Simulated fleet' : lastKnown ? 'Last known fleet' : 'TTC live fleet'}</small>
+          </div>
+          <div className="network-metric" role="group" aria-label="On schedule" title="Between 2 minutes early and 3 minutes late, among vehicles with a schedule estimate.">
+            <span>On schedule</span>
+            <strong>{!hasSnapshot ? unavailableValue : metrics.onTimePercent == null ? 'N/A' : `${metrics.onTimePercent}%`}</strong>
+            <Clock3 size={15} aria-hidden="true" />
+            <small>{!hasSnapshot ? unavailableDetail : metrics.onTimePercent == null ? 'Estimate unavailable' : `${metrics.onTimeVehicles.toLocaleString()} of ${metrics.scheduledVehicles.toLocaleString()} estimated`}</small>
+          </div>
+          <div className={`network-metric ${hasSnapshot && metrics.delayedVehicles > 0 ? 'attention' : ''}`} role="group" aria-label="Delayed" title="More than 3 minutes late. Coverage is the share of tracked vehicles with a schedule estimate.">
+            <span>Delayed</span>
+            <strong>{!hasSnapshot ? unavailableValue : metrics.onTimePercent == null ? 'N/A' : metrics.delayedVehicles.toLocaleString()}</strong>
+            <TriangleAlert size={15} aria-hidden="true" />
+            <small>{!hasSnapshot ? unavailableDetail : metrics.onTimePercent == null ? 'Estimate unavailable' : `> 3 min · ${metrics.scheduleCoveragePercent}% coverage`}</small>
+          </div>
+          <div className="network-metric" role="group" aria-label="Active alerts">
+            <span>Active alerts</span>
+            <strong>{hasSnapshot ? snapshot.alerts.length.toLocaleString() : unavailableValue}</strong>
+            <BellRing size={15} aria-hidden="true" />
+            <small>{!hasSnapshot ? unavailableDetail : !liveConfigured ? 'Simulated notices' : lastKnown ? 'Last known notices' : 'Reported by TTC'}</small>
+          </div>
+          <div className="scope-note"><Boxes size={16} aria-hidden="true" /><p><strong>Live coverage: TTC</strong><span>{staticNetwork ? `${staticNetwork.statistics.routes.toLocaleString()} GTA routes · ${staticNetwork.statistics.stops.toLocaleString()} stops` : 'TTC / GO Transit / UP Express'}</span></p></div>
+        </section>
 
         <div className="work-area">
-          <section className={`map-stage ${selectedVehicle ? 'has-selection' : ''}`}>
+          <section className={`map-stage ${selectedVehicle ? 'has-selection' : ''} ${focusedRoute ? 'has-route-selection' : ''}`}>
             {mapView === '2d' ? (
               <TransitMap
                 vehicles={visibleVehicles}
                 visibleRoutes={visibleRoutes}
-                stops={staticNetwork?.stops ?? []}
+                stops={mapStops}
                 selectedVehicleId={selectedVehicleId}
+                focusedRouteId={focusedRoute?.id ?? null}
                 onVehicleSelect={setSelectedVehicleId}
               />
             ) : (
@@ -478,8 +558,9 @@ export function HomePage() {
                 <MapLibreTransitMap
                   vehicles={visibleVehicles}
                   visibleRoutes={visibleRoutes}
-                  stops={staticNetwork?.stops ?? []}
+                  stops={mapStops}
                   selectedVehicleId={selectedVehicleId}
+                  focusedRouteId={focusedRoute?.id ?? null}
                   onVehicleSelect={setSelectedVehicleId}
                   onUnavailable={(message) => {
                     setMapNotice(message);
@@ -490,17 +571,26 @@ export function HomePage() {
             )}
 
             <div className="map-filter-bar">
+              <select
+                className="agency-select"
+                aria-label="Transit agency"
+                value={agencyFilter}
+                onChange={(event) => selectAgency(event.target.value as AgencyFilter)}
+              >
+                <option value="all">All agencies</option>
+                {(['ttc', 'go', 'up'] as const).map((agency) => <option key={agency} value={agency}>{agencyNames[agency]}</option>)}
+              </select>
               <div className="segmented-control" aria-label="Transport mode">
-                {(['all', 'subway', 'streetcar', 'bus'] as ModeFilter[]).map((mode) => (
-                  <button key={mode} className={modeFilter === mode ? 'active' : ''} onClick={() => setModeFilter(mode)}>
+                {(['all', 'subway', 'streetcar', 'bus', 'rail'] as ModeFilter[]).map((mode) => (
+                  <button key={mode} className={modeFilter === mode ? 'active' : ''} onClick={() => { setModeFilter(mode); setFocusedRouteId(null); setSelectedVehicleId(null); }}>
                     {mode === 'all' ? 'All modes' : mode}
                   </button>
                 ))}
               </div>
-              <button className={`icon-control ${paused ? 'paused' : ''}`} onClick={() => setPaused(!paused)} title={paused ? 'Resume playback' : 'Pause playback'}>
+              <button type="button" className={`icon-control ${paused ? 'paused' : ''}`} aria-pressed={paused} onClick={() => setPaused(!paused)} title={paused ? 'Resume playback' : 'Pause playback'}>
                 {paused ? <Play size={17} /> : <Pause size={17} />}
               </button>
-              <button className="icon-control" onClick={() => void refresh()} title="Refresh feed"><RefreshCw size={17} /></button>
+              <button type="button" className="icon-control" disabled={refreshing} aria-busy={refreshing} onClick={() => void refresh()} title="Refresh feed"><RefreshCw size={17} /></button>
               <div className="segmented-control map-view-control" aria-label="Map view">
                 {(['2d', '3d'] as MapView[]).map((view) => (
                   <button
@@ -525,6 +615,7 @@ export function HomePage() {
                   <span className="legend-item"><span className="legend-mode bus"><BusFront size={12} aria-hidden="true" /></span>Bus</span>
                   <span className="legend-item"><span className="legend-mode streetcar"><TramFront size={12} aria-hidden="true" /></span>Streetcar</span>
                   <span className="legend-item"><span className="legend-mode subway"><TrainFront size={12} aria-hidden="true" /></span>Subway</span>
+                  <span className="legend-item"><span className="legend-mode rail"><TrainFront size={12} aria-hidden="true" /></span>Rail</span>
                 </div>
               </div>
               <div className="legend-section">
@@ -551,8 +642,21 @@ export function HomePage() {
               />
             )}
 
+            {focusedRoute && !selectedVehicle && (
+              <aside className="route-focus" aria-label="Selected scheduled route">
+                <strong>{agencyNames[focusedRoute.agency ?? 'ttc']} {focusedRoute.shortName}</strong>
+                <span>{focusedRoute.longName}</span>
+                <small>Scheduled route / {visibleStops.filter((stop) => stop.routeIds?.includes(focusedRoute.id)).length} stops</small>
+              </aside>
+            )}
+
             {mapNotice && <div className="map-mode-notice">{mapNotice}</div>}
-            {error && <div className="feed-error">{error} Showing labeled simulation data.</div>}
+            {(error || networkError) && (
+              <div className="feed-error" role="alert">
+                {error && <>{error} {hasSnapshot ? 'Showing the last successful snapshot.' : 'Live metrics are unavailable.'} </>}
+                {networkError}
+              </div>
+            )}
 
             <div className="timeline-band">
               <div className="timeline-label"><Clock3 size={14} /><span>Schedule deviation</span></div>
@@ -575,8 +679,8 @@ export function HomePage() {
           <aside className="context-panel">
             <header className="panel-header">
               <div>
-                <span>{activePanel === 'fleet' ? 'Fleet monitor' : activePanel === 'alerts' ? 'Service notices' : 'Operator log'}</span>
-                <strong>{activePanel === 'fleet' ? `${visibleVehicles.length} in view` : activePanel === 'alerts' ? `${snapshot.alerts.length} active` : 'Shift context'}</strong>
+                <span>{activePanel === 'fleet' ? 'TTC live fleet' : activePanel === 'network' ? 'Scheduled network' : activePanel === 'alerts' ? 'TTC service notices' : 'Operator log'}</span>
+                <strong>{activePanel === 'fleet' ? `${visibleVehicles.length} in view` : activePanel === 'network' ? `${visibleRoutes.length} routes` : activePanel === 'alerts' ? `${snapshot.alerts.length} active` : 'Shift context'}</strong>
               </div>
               {activePanel === 'fleet' && <RouteIcon size={19} />}
               {activePanel === 'alerts' && <TriangleAlert size={19} />}
@@ -591,8 +695,22 @@ export function HomePage() {
                   {visibleVehicles.map((vehicle) => (
                     <FleetRow key={vehicle.id} vehicle={vehicle} selected={selectedVehicleId === vehicle.id} onSelect={() => setSelectedVehicleId(vehicle.id)} />
                   ))}
+                  {visibleVehicles.length === 0 && <p className="empty-panel">No live vehicles in this view. Live coverage: TTC buses and streetcars.</p>}
                 </div>
               </div>
+            )}
+
+            {activePanel === 'network' && (
+              <NetworkRoutes
+                routes={visibleRoutes}
+                stops={visibleStops}
+                feeds={staticNetwork?.feeds ?? []}
+                selectedAgency={agencyFilter}
+                onSelectAgency={selectAgency}
+                selectedRouteId={focusedRoute?.id ?? null}
+                onSelectRoute={(routeId) => { setFocusedRouteId(routeId); setSelectedVehicleId(null); }}
+                onClearRoute={() => setFocusedRouteId(null)}
+              />
             )}
 
             {activePanel === 'alerts' && (

@@ -198,10 +198,12 @@ export function mapAlertRows(rows: Array<Record<string, unknown>>): ServiceAlert
 }
 
 const FLEET_QUERY = `CurrentFleet()
+| where ObservedAt > ago(2m)
 | project ObservedAt, VehicleId, VehicleLabel, TripId, RouteId, Mode, Latitude,
           Longitude, Bearing, SpeedKph, ScheduleDeviationSeconds, Occupancy, State`;
 
 const ALERT_QUERY = `ActiveAlerts()
+| where ObservedAt > ago(2m)
 | project ObservedAt, AlertId, Severity, Title, Description, RouteIds`;
 
 export async function fetchLiveSnapshot(config: KqlConfig): Promise<TransitSnapshot> {
@@ -214,10 +216,13 @@ export async function fetchLiveSnapshot(config: KqlConfig): Promise<TransitSnaps
     .map((vehicle) => vehicle.observedAt)
     .sort()
     .at(-1);
+  if (!newestObservation) {
+    throw new Error('No current vehicle observations are available.');
+  }
 
   return {
     source: 'ttc-gtfs-rt',
-    observedAt: newestObservation ?? new Date().toISOString(),
+    observedAt: newestObservation,
     vehicles,
     alerts: mapAlertRows(alertRows),
   };

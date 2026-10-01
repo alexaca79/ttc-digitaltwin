@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FeatureCollection, LineString, Point } from 'geojson';
 import {
   Map as MapLibreMap,
+  LngLatBounds,
   NavigationControl,
   setWorkerUrl,
   type ErrorEvent as MapLibreErrorEvent,
@@ -12,6 +13,7 @@ import {
 } from 'maplibre-gl';
 import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
+import { isTrunkRoute, routePaintTier } from '@/components/routePaintOrder';
 import type {
   TransitRoute,
   TransitStop,
@@ -25,6 +27,7 @@ interface MapLibreTransitMapProps {
   visibleRoutes: TransitRoute[];
   stops: TransitStop[];
   selectedVehicleId: string | null;
+  focusedRouteId?: string | null;
   onVehicleSelect: (vehicleId: string | null) => void;
   onUnavailable: (message: string) => void;
 }
@@ -32,6 +35,11 @@ interface MapLibreTransitMapProps {
 interface RouteProperties {
   color: string;
   routeId: string;
+  focused: boolean;
+  raised: boolean;
+  tier: number;
+  casingWidth: number;
+  lineWidth: number;
 }
 
 interface StopProperties {
@@ -65,6 +73,43 @@ function vehicleColor(state: VehicleTelemetry['state']) {
   if (state === 'early') return '#147d64';
   if (state === 'unknown') return '#86857f';
   return '#151515';
+}
+
+function routeWidths(focused: boolean, trunk: boolean) {
+  if (!focused) return { casingWidth: 3, lineWidth: 1.5 };
+  return trunk ? { casingWidth: 11, lineWidth: 6.5 } : { casingWidth: 8, lineWidth: 4.5 };
+}
+
+// Raised routes repeat the casing and line pair above all other routes, so
+// their white casing separates them from the surface network beneath.
+function routeLayers(raised: boolean): StyleSpecification['layers'] {
+  const prefix = raised ? 'raised-' : '';
+  return [
+    {
+      id: `${prefix}route-casing`,
+      type: 'line',
+      source: 'ttc-routes',
+      filter: ['==', ['get', 'raised'], raised],
+      layout: { 'line-cap': 'round', 'line-join': 'round', 'line-sort-key': ['get', 'tier'] },
+      paint: {
+        'line-color': '#ffffff',
+        'line-opacity': ['case', ['get', 'focused'], 0.88, 0.15],
+        'line-width': ['get', 'casingWidth'],
+      },
+    },
+    {
+      id: `${prefix}routes`,
+      type: 'line',
+      source: 'ttc-routes',
+      filter: ['==', ['get', 'raised'], raised],
+      layout: { 'line-cap': 'round', 'line-join': 'round', 'line-sort-key': ['get', 'tier'] },
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-opacity': ['case', ['get', 'focused'], 0.96, 0.2],
+        'line-width': ['get', 'lineWidth'],
+      },
+    },
+  ];
 }
 
 function createMapStyle(): StyleSpecification {
@@ -193,28 +238,8 @@ function createMapStyle(): StyleSpecification {
           'fill-extrusion-vertical-gradient': true,
         },
       },
-      {
-        id: 'route-casing',
-        type: 'line',
-        source: 'ttc-routes',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': '#ffffff',
-          'line-opacity': 0.88,
-          'line-width': 8,
-        },
-      },
-      {
-        id: 'routes',
-        type: 'line',
-        source: 'ttc-routes',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': ['get', 'color'],
-          'line-opacity': 0.96,
-          'line-width': 4.5,
-        },
-      },
+      ...routeLayers(false),
+      ...routeLayers(true),
       {
         id: 'stops',
         type: 'circle',
@@ -254,17 +279,30 @@ function createMapStyle(): StyleSpecification {
 }
 
 function routeData(
-  routes: TransitRoute[]
+  routes: TransitRoute[],
+  focusedRouteId?: string | null
 ): FeatureCollection<LineString, RouteProperties> {
   return {
     type: 'FeatureCollection',
-    features: routes
-      .filter((route) => route.path.length >= 2)
-      .map((route) => ({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: route.path },
-        properties: { color: route.color, routeId: route.id },
-      })),
+    features: routes.flatMap((route) => {
+      const focused = !focusedRouteId || route.id === focusedRouteId;
+      const trunk = isTrunkRoute(route);
+      const properties: RouteProperties = {
+        color: route.color,
+        routeId: route.id,
+        focused,
+        raised: focusedRouteId ? route.id === focusedRouteId : trunk,
+        tier: routePaintTier(route, focusedRouteId),
+        ...routeWidths(focused, trunk),
+      };
+      return (route.paths ?? [route.path])
+        .filter((path) => path.length >= 2)
+        .map((path) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: path },
+          properties,
+        }));
+    }),
   };
 }
 
@@ -312,6 +350,7 @@ export function MapLibreTransitMap({
   visibleRoutes,
   stops,
   selectedVehicleId,
+  focusedRouteId,
   onVehicleSelect,
   onUnavailable,
 }: MapLibreTransitMapProps) {
@@ -339,16 +378,16 @@ export function MapLibreTransitMap({
     try {
       map = new MapLibreMap({
         container: containerRef.current,
-        center: [-79.392, 43.674],
-        zoom: 13.4,
+        center: [-79.55, 43.74],
+        zoom: 10.4,
         pitch: 58,
         bearing: -17,
-        minZoom: 9,
+        minZoom: 7,
         maxZoom: 19,
         maxPitch: 72,
         attributionControl: {
           compact: true,
-          customAttribution: 'TTC Open Data',
+          customAttribution: 'TTC / Metrolinx GTFS',
         },
         canvasContextAttributes: {
           antialias: true,
@@ -425,9 +464,9 @@ export function MapLibreTransitMap({
     const map = mapRef.current;
     if (!mapReady || !map) return;
     void (map.getSource('ttc-routes') as GeoJSONSource).setData(
-      routeData(visibleRoutes)
+      routeData(visibleRoutes, focusedRouteId)
     );
-  }, [mapReady, visibleRoutes]);
+  }, [focusedRouteId, mapReady, visibleRoutes]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -457,16 +496,31 @@ export function MapLibreTransitMap({
     });
   }, [mapReady, selectedVehicleId, vehicles]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    const route = visibleRoutes.find((candidate) => candidate.id === focusedRouteId);
+    if (!mapReady || !map || !route) return;
+    const bounds = new LngLatBounds();
+    for (const path of route.paths ?? [route.path]) {
+      for (const coordinate of path) bounds.extend(coordinate);
+    }
+    if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 65, maxZoom: 13, pitch: 45, duration: 650 });
+  }, [focusedRouteId, mapReady, visibleRoutes]);
+
   return (
     <div
       className="transit-map-shell maplibre-map-shell"
       data-map-ready={mapReady}
+      data-route-count={visibleRoutes.length}
+      data-route-path-count={visibleRoutes.reduce((count, route) => count + (route.paths?.length ?? 1), 0)}
+      data-stop-count={stops.length}
+      data-focused-route={focusedRouteId ?? ''}
       aria-busy={!mapReady}
     >
       <div
         ref={containerRef}
         className="transit-map"
-        aria-label="Live TTC three-dimensional operations map"
+        aria-label="GTA three-dimensional transit map"
       />
       {!mapReady && <div className="map-loading">Loading 3D scene...</div>}
       {mapWarning && <div className="map-warning">{mapWarning}</div>}
