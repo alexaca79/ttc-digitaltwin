@@ -107,7 +107,16 @@ const MEDALLION_NOTEBOOKS = [
   { folder: 'notebook-gold', name: 'TTCScheduleGold', description: 'Schedule lookup used for real-time adherence.' },
 ] as const;
 
-function medallionNotebookDefinition(folder: string, variables: Record<string, string>) {
+/** Analysis notebooks over the retained GTFS snapshots and TTCOperations telemetry. */
+const ANALYSIS_NOTEBOOKS = [
+  {
+    folder: 'notebook-interchange',
+    name: 'GoTtcInterchange',
+    description: 'How GO trains and TTC routes hand riders to each other at shared stations.',
+  },
+] as const;
+
+function folderNotebookDefinition(folder: string, variables: Record<string, string>) {
   return {
     format: 'fabricGitSource',
     parts: [
@@ -233,7 +242,13 @@ async function main() {
         LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
       }),
       medallionNotebooks: MEDALLION_NOTEBOOKS.map((entry) =>
-        medallionNotebookDefinition(entry.folder, {
+        folderNotebookDefinition(entry.folder, {
+          LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
+        })
+      ),
+      analysisNotebooks: ANALYSIS_NOTEBOOKS.map((entry) =>
+        folderNotebookDefinition(entry.folder, {
+          KQL_CLUSTER_URI: 'https://example.kusto.fabric.microsoft.com',
           LAKEHOUSE_ABFSS: 'abfss://workspace@onelake.dfs.fabric.microsoft.com/lakehouse',
         })
       ),
@@ -250,8 +265,9 @@ async function main() {
     console.log(
       `Fabric plan valid: ${plan.eventstream.parts.length} Eventstream parts, ` +
         `${plan.notebook.parts.length} decoder notebook parts, ` +
-        `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts, and ` +
-        `${plan.medallionNotebooks.length} medallion notebooks ` +
+        `${plan.nativeIngestNotebook.parts.length} native ingest notebook parts, ` +
+        `${plan.medallionNotebooks.length} medallion notebooks, and ` +
+        `${plan.analysisNotebooks.length} analysis notebooks ` +
         `routed to ${plan.kqlDatabase}.`
     );
     return;
@@ -359,7 +375,7 @@ async function main() {
     const { item, created } = await ensureFabricItem(token, workspaceId, 'notebooks', entry.name, {
       displayName: entry.name,
       description: entry.description,
-      definition: medallionNotebookDefinition(entry.folder, notebookVariables),
+      definition: folderNotebookDefinition(entry.folder, notebookVariables),
     });
     if (!created) {
       await updateFabricDefinition(
@@ -367,10 +383,29 @@ async function main() {
         workspaceId,
         'notebooks',
         item.id,
-        medallionNotebookDefinition(entry.folder, notebookVariables)
+        folderNotebookDefinition(entry.folder, notebookVariables)
       );
     }
     medallionNotebookIds[entry.name] = item.id;
+  }
+
+  const analysisNotebookIds: Record<string, string> = {};
+  for (const entry of ANALYSIS_NOTEBOOKS) {
+    const { item, created } = await ensureFabricItem(token, workspaceId, 'notebooks', entry.name, {
+      displayName: entry.name,
+      description: entry.description,
+      definition: folderNotebookDefinition(entry.folder, notebookVariables),
+    });
+    if (!created) {
+      await updateFabricDefinition(
+        token,
+        workspaceId,
+        'notebooks',
+        item.id,
+        folderNotebookDefinition(entry.folder, notebookVariables)
+      );
+    }
+    analysisNotebookIds[entry.name] = item.id;
   }
 
   const dashboardVariables = {
@@ -469,6 +504,7 @@ async function main() {
     notebookId: notebook.id,
     nativeIngestNotebookId: nativeIngestNotebook.id,
     medallionNotebookIds,
+    analysisNotebookIds,
     lakehouseId: lakehouse.id,
     lakehouseAbfss,
     dashboardId: dashboard.id,
